@@ -1,0 +1,9 @@
+# Global code owners
+* @HenriqueFreitas07 @sebastiaoteixeira @guilherme096
+
+# Branch-specific protections
+# Main branch
+main @HenriqueFreitas07 @sebastiaoteixeira @guilherme096
+
+# Dev branch  
+dev @HenriqueFreitas07 @sebastiaoteixeira @guilherme096
