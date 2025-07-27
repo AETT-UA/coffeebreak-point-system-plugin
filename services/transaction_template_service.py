@@ -10,7 +10,7 @@ class TransactionTemplateService:
     def __init__(self, db:Session):
         self.db:Session = db
 
-    def create_template(self, template: TransactionTemplate) -> TransactionTemplate:
+    def create_template(self, template: TransactionTemplate) -> Optional[TransactionTemplate]:
         """
         Create a new transaction template
 
@@ -38,10 +38,8 @@ class TransactionTemplateService:
         if existing_template:
             fail()
             
-        db_template = TransactionTemplate(
-            name=template.name,
-            template=template.template
-        )
+        template_data = {k: v for k, v in template.__dict__.items() if v is not None}
+        db_template = TransactionTemplate(**template_data)
         
         try:
             self.db.add(db_template)
@@ -86,6 +84,7 @@ class TransactionTemplateService:
         if not db_template:
             raise HTTPException(status_code=404, detail="Template not found")
 
+        # Update only the fields that are provided in the template_data
         for key, value in template_data.dict().items():
             if value is not None:
                 setattr(db_template, key, value)
