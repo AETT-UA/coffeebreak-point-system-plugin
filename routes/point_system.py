@@ -3,6 +3,7 @@ from fastapi import HTTPException, Query, Depends, Path
 from typing import List, Optional
 import logging
 import json
+from fastapi.responses import JSONResponse
 
 from ..schemas.point_system import SimpleUser, Transaction, TransactionRequest, TransactionType
 from ..services.point_system_service import PointSystemService, PointSystemUnavailable, UpstreamPointSystemError
@@ -16,7 +17,7 @@ def _raise_upstream(e: UpstreamPointSystemError):
         body = json.loads(e.detail)
     except Exception:
         body = {"detail": e.detail}
-    raise HTTPException(status_code=e.status_code, detail=body)
+    return JSONResponse(status_code=e.status_code, content=body)
 
 @router.get("/leaderboard", response_model=List[SimpleUser])
 async def get_global_leaderboard():
@@ -30,7 +31,7 @@ async def get_global_leaderboard():
     except PointSystemUnavailable as e:
         raise HTTPException(status_code=502, detail=str(e))
     except UpstreamPointSystemError as e:
-        _raise_upstream(e)
+        return _raise_upstream(e)
     except Exception as e:
         logger.error(f"Failed to get global leaderboard: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve leaderboard")
@@ -47,7 +48,7 @@ async def get_activity_leaderboard(activity_id: int = Path(..., description="Act
     except PointSystemUnavailable as e:
         raise HTTPException(status_code=502, detail=str(e))
     except UpstreamPointSystemError as e:
-        _raise_upstream(e)
+        return _raise_upstream(e)
     except Exception as e:
         logger.error(f"Failed to get activity leaderboard for {activity_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve activity leaderboard")
@@ -65,7 +66,7 @@ async def get_user_points(user_id: int = Path(..., description="User identifier"
     except PointSystemUnavailable as e:
         raise HTTPException(status_code=502, detail=str(e))
     except UpstreamPointSystemError as e:
-        _raise_upstream(e)
+        return _raise_upstream(e)
     except Exception as e:
         logger.error(f"Failed to get points for user {user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve user points")
@@ -82,7 +83,7 @@ async def get_user_history(user_id: int = Path(..., description="User identifier
     except PointSystemUnavailable as e:
         raise HTTPException(status_code=502, detail=str(e))
     except UpstreamPointSystemError as e:
-        _raise_upstream(e)
+        return _raise_upstream(e)
     except Exception as e:
         logger.error(f"Failed to get history for user {user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve user history")
@@ -103,7 +104,7 @@ async def get_user_activity_points(
     except PointSystemUnavailable as e:
         raise HTTPException(status_code=502, detail=str(e))
     except UpstreamPointSystemError as e:
-        _raise_upstream(e)
+        return _raise_upstream(e)
     except Exception as e:
         logger.error(f"Failed to get activity points for user {user_id} in activity {activity_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve activity points")
@@ -128,7 +129,7 @@ async def add_points(
     except PointSystemUnavailable as e:
         raise HTTPException(status_code=502, detail=str(e))
     except UpstreamPointSystemError as e:
-        _raise_upstream(e)
+        return _raise_upstream(e)
     except Exception as e:
         logger.error(f"Failed to add points for user {user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to add points")
@@ -153,7 +154,7 @@ async def remove_points(
     except PointSystemUnavailable as e:
         raise HTTPException(status_code=502, detail=str(e))
     except UpstreamPointSystemError as e:
-        _raise_upstream(e)
+        return _raise_upstream(e)
     except Exception as e:
         logger.error(f"Failed to remove points from user {user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to remove points")
