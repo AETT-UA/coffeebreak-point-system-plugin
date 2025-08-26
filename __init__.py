@@ -7,6 +7,7 @@ import logging
 
 logger = logging.getLogger("coffeebreak.point_system")
 
+IDENTIFIER = "coffeebreak-point-system-plugin"  # must match plugin folder name
 NAME = "Point System Plugin"
 DESCRIPTION = "Integration with the external point system service for managing user points and leaderboards."
 
@@ -22,7 +23,7 @@ async def register_plugin():
     
     # Create plugin setting in database
     setting = PluginSetting(
-        title=NAME,
+        title=IDENTIFIER,  # identifier used by core to route settings updates
         name=NAME,
         description=DESCRIPTION,
         inputs=plugin_inputs

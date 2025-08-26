@@ -7,6 +7,16 @@ from ..schemas.point_system import SimpleUser, Transaction, TransactionRequest, 
 
 logger = logging.getLogger("coffeebreak.point_system")
 
+class PointSystemUnavailable(Exception):
+    pass
+
+class UpstreamPointSystemError(Exception):
+    def __init__(self, status_code: int, detail: str):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
 class PointSystemService:
     """Service for integrating with external point system"""
     
@@ -16,30 +26,24 @@ class PointSystemService:
         self.timeout = 30.0
         self.retry_attempts = 3
         self.client = None
+        
         logger.info("PointSystemService initialized with default configuration")
     
     def _load_settings_from_module(self):
-        """Load plugin settings from the module (managed by plugin service)"""
+        """Load plugin settings from the in-memory plugin module registry"""
         try:
-            # Import the plugin module to access its SETTINGS
-            from plugin_loader import plugins_modules
-            
+            from plugin_loader import plugins_modules  # lazy import to avoid cycles
             if "coffeebreak-point-system-plugin" in plugins_modules:
                 plugin_module = plugins_modules["coffeebreak-point-system-plugin"]
                 if hasattr(plugin_module, 'SETTINGS'):
                     settings = plugin_module.SETTINGS
-                    
-                    # Update service configuration
                     self.base_url = settings.point_system_url
                     self.timeout = float(settings.connection_timeout)
-                    self.retry_attempts = settings.retry_attempts
-                    
+                    self.retry_attempts = int(settings.retry_attempts)
                     logger.info(f"Loaded plugin settings: URL={self.base_url}, Timeout={self.timeout}s")
                     return True
-            
             logger.warning("Plugin module or SETTINGS not found, using defaults")
             return False
-            
         except Exception as e:
             logger.warning(f"Failed to load plugin settings, using defaults: {e}")
             return False
@@ -76,18 +80,34 @@ class PointSystemService:
             except httpx.HTTPStatusError as e:
                 logger.error(f"HTTP error {e.response.status_code} for {url}: {e.response.text}")
                 if attempt == self.retry_attempts - 1:
-                    raise
+                    raise UpstreamPointSystemError(e.response.status_code, e.response.text)
+                logger.info(f"Retrying request (attempt {attempt + 1}/{self.retry_attempts})")
+            except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+                logger.error(f"Connection error for {url}: {e}")
+                if attempt == self.retry_attempts - 1:
+                    raise PointSystemUnavailable(f"Point system service is unreachable at {self.base_url}")
                 logger.info(f"Retrying request (attempt {attempt + 1}/{self.retry_attempts})")
             except httpx.RequestError as e:
                 logger.error(f"Request error for {url}: {e}")
                 if attempt == self.retry_attempts - 1:
-                    raise
+                    raise PointSystemUnavailable(f"Point system request failed: {e}")
                 logger.info(f"Retrying request (attempt {attempt + 1}/{self.retry_attempts})")
             except Exception as e:
                 logger.error(f"Unexpected error for {url}: {e}")
                 raise
         
-        raise Exception(f"All {self.retry_attempts} retry attempts failed")
+        raise PointSystemUnavailable(f"Point system service at {self.base_url} did not respond after {self.retry_attempts} attempts")
+
+    def _safe_int_compare(self, value1, value2):
+        """Safely compare two values that should be integers, handling string conversion"""
+        try:
+            if value1 is None:
+                return value2 is None
+            if value2 is None:
+                return value1 is None
+            return int(value1) == int(value2)
+        except (ValueError, TypeError):
+            return False
 
     class leaderboard:
         @classmethod
@@ -101,8 +121,8 @@ class PointSystemService:
                 service = PointSystemService()
                 async with service:
                     data = await service._make_request('GET', '/leaderboard/')
-                    # Convert LeaderboardEntry to SimpleUser
-                    return [SimpleUser(id=entry['user_id'], points=entry['points']) for entry in data]
+                    # Convert LeaderboardEntry to SimpleUser with explicit casting
+                    return [SimpleUser(id=int(entry['user_id']), points=float(entry['points'])) for entry in data]
             except Exception as e:
                 logger.error(f"Failed to get global leaderboard: {e}")
                 raise
@@ -120,8 +140,8 @@ class PointSystemService:
                 service = PointSystemService()
                 async with service:
                     data = await service._make_request('GET', f'/leaderboard/{activity_id}/')
-                    # Convert LeaderboardEntry to SimpleUser
-                    return [SimpleUser(id=entry['user_id'], points=entry['points']) for entry in data]
+                    # Convert LeaderboardEntry to SimpleUser with explicit casting
+                    return [SimpleUser(id=int(entry['user_id']), points=float(entry['points'])) for entry in data]
             except Exception as e:
                 logger.error(f"Failed to get activity leaderboard for {activity_id}: {e}")
                 raise
@@ -141,10 +161,15 @@ class PointSystemService:
                 async with service:
                     # Get user history and calculate current balance
                     data = await service._make_request('GET', f'/points/{user_id}/history')
-                    if 'history' in data and data['history']:
-                        # Calculate balance from transaction history
-                        balance = sum(tx['points'] for tx in data['history'])
-                        return max(0, balance)  # Ensure non-negative
+                    history = data.get('history') if isinstance(data, dict) else None
+                    if isinstance(history, list) and history:
+                        total = 0.0
+                        for tx in history:
+                            try:
+                                total += float(tx.get('points', 0))
+                            except (ValueError, TypeError):
+                                continue
+                        return max(0, total)
                     return 0.0
             except Exception as e:
                 logger.error(f"Failed to get points for user {user_id}: {e}")
@@ -187,24 +212,30 @@ class PointSystemService:
                 service = PointSystemService()
                 async with service:
                     data = await service._make_request('GET', f'/points/{user_id}/history')
-                    if 'history' in data:
-                        # Convert external TransactionResponse to internal Transaction
+                    history = data.get('history') if isinstance(data, dict) else None
+                    if isinstance(history, list):
                         transactions = []
-                        for tx_data in data['history']:
+                        for tx_data in history:
                             try:
+                                tx_id = int(tx_data['id']) if tx_data.get('id') is not None else None
+                                tx_user_id = int(tx_data['user_id']) if tx_data.get('user_id') is not None else None
+                                tx_activity_id = int(tx_data['activity_id']) if tx_data.get('activity_id') is not None else None
+                                tx_issued_by_id = int(tx_data['issued_by_id']) if tx_data.get('issued_by_id') is not None else None
+                                tx_points = float(tx_data['points']) if tx_data.get('points') is not None else 0.0
+                                if tx_id is None or tx_user_id is None:
+                                    continue
                                 tx = Transaction(
-                                    id=int(tx_data['id']),
-                                    activity_id=int(tx_data['activity_id']) if tx_data.get('activity_id') is not None else None,
-                                    user_id=int(tx_data['user_id']),
-                                    issued_by_id=int(tx_data['issued_by_id']) if tx_data.get('issued_by_id') is not None else None,
-                                    points=float(tx_data['points']),
+                                    id=tx_id,
+                                    activity_id=tx_activity_id,
+                                    user_id=tx_user_id,
+                                    issued_by_id=tx_issued_by_id,
+                                    points=tx_points,
                                     transaction_type=TransactionType(tx_data['transaction_type']),
                                     description=tx_data.get('description'),
                                     created_at=tx_data['created_at']
                                 )
                                 transactions.append(tx)
-                            except (ValueError, TypeError) as e:
-                                logger.warning(f"Skipping invalid transaction data: {e}, data: {tx_data}")
+                            except (ValueError, TypeError, KeyError):
                                 continue
                         return transactions
                     return []
@@ -230,8 +261,8 @@ class PointSystemService:
                     if 'history' in data and data['history']:
                         # Calculate balance for specific activity
                         activity_balance = sum(
-                            tx['points'] for tx in data['history'] 
-                            if tx.get('activity_id') == activity_id
+                            float(tx['points']) for tx in data['history'] 
+                            if service._safe_int_compare(tx.get('activity_id'), activity_id)
                         )
                         return max(0, activity_balance)
                     return 0.0
