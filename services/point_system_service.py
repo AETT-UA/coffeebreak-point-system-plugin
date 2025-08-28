@@ -1,34 +1,134 @@
 from typing import List, Optional           # type: ignore
 import logging
-import random
+import httpx
+from urllib.parse import urljoin
 
 from ..schemas.point_system import SimpleUser, Transaction, TransactionRequest, TransactionType
 
 logger = logging.getLogger("coffeebreak.point_system")
 
+class PointSystemUnavailable(Exception):
+    pass
+
+class UpstreamPointSystemError(Exception):
+    def __init__(self, status_code: int, detail: str):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
 class PointSystemService:
+    """Service for integrating with external point system"""
+    
+    def __init__(self):
+        # Default configuration - will be overridden by plugin settings
+        self.base_url = "http://localhost:8000"
+        self.timeout = 30.0
+        self.retry_attempts = 3
+        self.client = None
+        
+        logger.info("PointSystemService initialized with default configuration")
+    
+    def _load_settings_from_module(self):
+        """Load plugin settings from the in-memory plugin module registry"""
+        try:
+            from plugin_loader import plugins_modules  # lazy import to avoid cycles
+            if "coffeebreak-point-system-plugin" in plugins_modules:
+                plugin_module = plugins_modules["coffeebreak-point-system-plugin"]
+                if hasattr(plugin_module, 'SETTINGS'):
+                    settings = plugin_module.SETTINGS
+                    self.base_url = settings.point_system_url
+                    self.timeout = float(settings.connection_timeout)
+                    self.retry_attempts = int(settings.retry_attempts)
+                    logger.info(f"Loaded plugin settings: URL={self.base_url}, Timeout={self.timeout}s")
+                    return True
+            logger.warning("Plugin module or SETTINGS not found, using defaults")
+            return False
+        except Exception as e:
+            logger.warning(f"Failed to load plugin settings, using defaults: {e}")
+            return False
+    
+    async def _ensure_client(self):
+        """Ensure HTTP client is initialized with current settings"""
+        if self.client is None:
+            # Try to load settings from module
+            self._load_settings_from_module()
+            self.client = httpx.AsyncClient(timeout=self.timeout)
+    
+    async def __aenter__(self):
+        await self._ensure_client()
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self.client:
+            await self.client.aclose()
+    
+    def _get_url(self, endpoint: str) -> str:
+        """Build full URL for endpoint"""
+        return urljoin(self.base_url, endpoint)
+    
+    async def _make_request(self, method: str, endpoint: str, **kwargs) -> dict:
+        """Make HTTP request to external service with retry logic"""
+        await self._ensure_client()
+        url = self._get_url(endpoint)
+        
+        for attempt in range(self.retry_attempts):
+            try:
+                response = await self.client.request(method, url, **kwargs)
+                response.raise_for_status()
+                return response.json() if response.content else {}
+            except httpx.HTTPStatusError as e:
+                logger.error(f"HTTP error {e.response.status_code} for {url}: {e.response.text}")
+                if attempt == self.retry_attempts - 1:
+                    raise UpstreamPointSystemError(e.response.status_code, e.response.text)
+                logger.info(f"Retrying request (attempt {attempt + 1}/{self.retry_attempts})")
+            except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+                logger.error(f"Connection error for {url}: {e}")
+                if attempt == self.retry_attempts - 1:
+                    raise PointSystemUnavailable(f"Point system service is unreachable at {self.base_url}")
+                logger.info(f"Retrying request (attempt {attempt + 1}/{self.retry_attempts})")
+            except httpx.RequestError as e:
+                logger.error(f"Request error for {url}: {e}")
+                if attempt == self.retry_attempts - 1:
+                    raise PointSystemUnavailable(f"Point system request failed: {e}")
+                logger.info(f"Retrying request (attempt {attempt + 1}/{self.retry_attempts})")
+            except Exception as e:
+                logger.error(f"Unexpected error for {url}: {e}")
+                raise
+        
+        raise PointSystemUnavailable(f"Point system service at {self.base_url} did not respond after {self.retry_attempts} attempts")
+
+    def _safe_int_compare(self, value1, value2):
+        """Safely compare two values that should be integers, handling string conversion"""
+        try:
+            if value1 is None:
+                return value2 is None
+            if value2 is None:
+                return value1 is None
+            return int(value1) == int(value2)
+        except (ValueError, TypeError):
+            return False
 
     class leaderboard:
-
         @classmethod
-        def __fake_leaderboard(cls) -> List[SimpleUser]:
-            """Generate a fake leaderboard for testing purposes."""
-            return [SimpleUser(id=x, points=y) for x, y in zip(range(1, 11), range(100, 0, -10))]
-
-        @classmethod
-        def get(cls) -> List[SimpleUser]:
+        async def get(cls) -> List[SimpleUser]:
             """
             Retrieve the general leaderboard of users with their points.
             Returns:
                 List of SimpleUser objects representing the leaderboard.
             """
-
-            #TODO: add api call
-            logger.debug("Leaderboard called, but not implemented yet. Returning fake data")
-            return cls.__fake_leaderboard()
+            try:
+                service = PointSystemService()
+                async with service:
+                    data = await service._make_request('GET', '/leaderboard/')
+                    # Convert LeaderboardEntry to SimpleUser with explicit casting
+                    return [SimpleUser(id=int(entry['user_id']), points=float(entry['points'])) for entry in data]
+            except Exception as e:
+                logger.error(f"Failed to get global leaderboard: {e}")
+                raise
 
         @classmethod
-        def get_activity(cls, activity_id) -> List[SimpleUser]:
+        async def get_activity(cls, activity_id: int) -> List[SimpleUser]:
             """
             Retrieve the leaderboard of a specific activity.
             Args:
@@ -36,32 +136,19 @@ class PointSystemService:
             Returns:
                 List of SimpleUser objects representing the leaderboard for the activity.
             """
-
-            #TODO: add api call
-            logger.debug(f"Leaderboard in activity [{activity_id}] called, but not implemented yet. Returning fake data")
-            return cls.__fake_leaderboard()
+            try:
+                service = PointSystemService()
+                async with service:
+                    data = await service._make_request('GET', f'/leaderboard/{activity_id}/')
+                    # Convert LeaderboardEntry to SimpleUser with explicit casting
+                    return [SimpleUser(id=int(entry['user_id']), points=float(entry['points'])) for entry in data]
+            except Exception as e:
+                logger.error(f"Failed to get activity leaderboard for {activity_id}: {e}")
+                raise
 
     class points:
-
         @classmethod
-        def __fake_transaction(cls, user_id: int, points: float) -> Transaction:
-            """Generate a fake transaction for testing purposes."""
-            return Transaction(
-                id=random.randint(1, 1000),
-                activity_id=None,
-                user_id=user_id,
-                issued_by_id=None,
-                points=points,
-                transaction_type=TransactionType.MANUAL,
-                description="Fake transaction for testing",
-            )
-        @classmethod
-        def __fake_points(cls) -> float:
-            """Generate a fake points value for testing purposes."""
-            return random.uniform(0, 1000)
-
-        @classmethod
-        def get(cls, user_id: int) -> float:
+        async def get(cls, user_id: int) -> float:
             """
             Retrieve the points of a specific user.
             Args:
@@ -69,12 +156,27 @@ class PointSystemService:
             Returns:
                 Points of the user.
             """
-            # TODO: add api call
-            logger.debug(f"Points for user [{user_id}] called, but not implemented yet. Returning fake data")
-            return cls.__fake_points()
+            try:
+                service = PointSystemService()
+                async with service:
+                    # Get user history and calculate current balance
+                    data = await service._make_request('GET', f'/points/{user_id}/history')
+                    history = data.get('history') if isinstance(data, dict) else None
+                    if isinstance(history, list) and history:
+                        total = 0.0
+                        for tx in history:
+                            try:
+                                total += float(tx.get('points', 0))
+                            except (ValueError, TypeError):
+                                continue
+                        return max(0, total)
+                    return 0.0
+            except Exception as e:
+                logger.error(f"Failed to get points for user {user_id}: {e}")
+                raise
 
         @classmethod
-        def remove(cls, user_id:int , points:float ) -> bool:
+        async def remove(cls, user_id: int, points: float) -> bool:
             """
             Remove points from a specific user.
             Args:
@@ -83,25 +185,66 @@ class PointSystemService:
             Returns:
                 True if points were successfully removed, False otherwise.
             """
-            # TODO: add api call
-            logger.debug(f"Removing {points} points from user [{user_id}], but not implemented yet. Returning True")
-            return True
+            try:
+                service = PointSystemService()
+                async with service:
+                    removal_data = {
+                        "points": points,
+                        "description": f"Manual removal of {points} points"
+                    }
+                    await service._make_request('POST', f'/points/{user_id}/remove', json=removal_data)
+                    logger.info(f"Successfully removed {points} points from user {user_id}")
+                    return True
+            except Exception as e:
+                logger.error(f"Failed to remove {points} points from user {user_id}: {e}")
+                return False
 
         @classmethod
-        def get_history(cls, user_id: int) -> List[Transaction]:
+        async def get_history(cls, user_id: int) -> List[Transaction]:
             """
             Retrieve the transaction history of a specific user.
             Args:
                 user_id: ID of the user to get points history for.
             Returns:
-                List of SimpleUser objects representing the points history.
+                List of Transaction objects representing the points history.
             """
-            # TODO: add api call
-            logger.debug(f"Transaction history for user [{user_id}] called, but not implemented yet. Returning transaction history")
-            return [cls.__fake_transaction(i, random.uniform(0, 1000) ) for i in range(6)]
+            try:
+                service = PointSystemService()
+                async with service:
+                    data = await service._make_request('GET', f'/points/{user_id}/history')
+                    history = data.get('history') if isinstance(data, dict) else None
+                    if isinstance(history, list):
+                        transactions = []
+                        for tx_data in history:
+                            try:
+                                tx_id = int(tx_data['id']) if tx_data.get('id') is not None else None
+                                tx_user_id = int(tx_data['user_id']) if tx_data.get('user_id') is not None else None
+                                tx_activity_id = int(tx_data['activity_id']) if tx_data.get('activity_id') is not None else None
+                                tx_issued_by_id = int(tx_data['issued_by_id']) if tx_data.get('issued_by_id') is not None else None
+                                tx_points = float(tx_data['points']) if tx_data.get('points') is not None else 0.0
+                                if tx_id is None or tx_user_id is None:
+                                    continue
+                                tx = Transaction(
+                                    id=tx_id,
+                                    activity_id=tx_activity_id,
+                                    user_id=tx_user_id,
+                                    issued_by_id=tx_issued_by_id,
+                                    points=tx_points,
+                                    transaction_type=TransactionType(tx_data['transaction_type']),
+                                    description=tx_data.get('description'),
+                                    created_at=tx_data['created_at']
+                                )
+                                transactions.append(tx)
+                            except (ValueError, TypeError, KeyError):
+                                continue
+                        return transactions
+                    return []
+            except Exception as e:
+                logger.error(f"Failed to get history for user {user_id}: {e}")
+                raise
 
         @classmethod
-        def get_in_activity(cls, user_id: int, activity_id: int) -> float:
+        async def get_in_activity(cls, user_id: int, activity_id: int) -> float:
             """
             Retrieve the points of a specific user in a specific activity.
             Args:
@@ -110,12 +253,25 @@ class PointSystemService:
             Returns:
                 Points of the user in the activity.
             """
-            # TODO: add api call
-            logger.debug(f"Points for user [{user_id}] in activity [{activity_id}] called, but not implemented yet. Returning fake data")
-            return cls.__fake_points()
+            try:
+                service = PointSystemService()
+                async with service:
+                    # Get user history and filter by activity
+                    data = await service._make_request('GET', f'/points/{user_id}/history')
+                    if 'history' in data and data['history']:
+                        # Calculate balance for specific activity
+                        activity_balance = sum(
+                            float(tx['points']) for tx in data['history'] 
+                            if service._safe_int_compare(tx.get('activity_id'), activity_id)
+                        )
+                        return max(0, activity_balance)
+                    return 0.0
+            except Exception as e:
+                logger.error(f"Failed to get points for user {user_id} in activity {activity_id}: {e}")
+                raise
 
         @classmethod
-        def create_transaction(cls,user_id:int, transaction: TransactionRequest, transaction_type:TransactionType) -> Optional[Transaction]:
+        async def create_transaction(cls, user_id: int, transaction: TransactionRequest, transaction_type: TransactionType) -> Optional[Transaction]:
             """
             Create a new transaction for a user.
             Args:
@@ -125,8 +281,40 @@ class PointSystemService:
             Returns:
                 Transaction object if the transaction was successfully created, None otherwise.
             """
-
-            #TODO: add api call
-            logger.debug(f"Creating transaction for user [{user_id}] with points {transaction.points}, but not implemented yet. Returning fake transaction")
-
-            return cls.__fake_transaction(user_id, transaction.points)
+            try:
+                service = PointSystemService()
+                async with service:
+                    # Prepare transaction data for external service
+                    tx_data = {
+                        "points": transaction.points,
+                        "description": transaction.description,
+                        "activity_id": transaction.activity_id
+                    }
+                    
+                    # Map internal transaction type to external service type
+                    type_param = "activity" if transaction_type == TransactionType.ACTIVITY else "manual"
+                    
+                    data = await service._make_request(
+                        'POST', 
+                        f'/points/{user_id}/add?type={type_param}', 
+                        json=tx_data
+                    )
+                    
+                    # Convert response to internal Transaction format with proper type casting
+                    try:
+                        return Transaction(
+                            id=int(data['id']),
+                            activity_id=int(data['activity_id']) if data.get('activity_id') is not None else None,
+                            user_id=int(data['user_id']),
+                            issued_by_id=int(data['issued_by_id']) if data.get('issued_by_id') is not None else None,
+                            points=float(data['points']),
+                            transaction_type=TransactionType(data['transaction_type']),
+                            description=data.get('description'),
+                            created_at=data['created_at']
+                        )
+                    except (ValueError, TypeError) as e:
+                        logger.error(f"Invalid transaction data from external service: {e}, data: {data}")
+                        raise ValueError(f"External service returned invalid data: {e}")
+            except Exception as e:
+                logger.error(f"Failed to create transaction for user {user_id}: {e}")
+                raise
