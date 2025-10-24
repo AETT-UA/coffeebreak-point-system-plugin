@@ -1,4 +1,4 @@
-from coffeebreak.utils.api import Router
+from coffeebreak import Router
 from .transaction_template import router as transaction_template_router
 
 router = Router()

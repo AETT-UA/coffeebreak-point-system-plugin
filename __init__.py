@@ -1,4 +1,4 @@
-from coffeebreak.utils.api import Router
+from coffeebreak import Router
 from .routes import router
 
 

@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, Text, DateTime, String
 from sqlalchemy.sql import func
-from coffeebreak.dependencies.database import Base
+from coffeebreak.db import ModelBase as Base
 
 class TransactionTemplate(Base):
     """
