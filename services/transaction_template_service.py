@@ -1,10 +1,11 @@
-from typing import List, Optional           # type: ignore
-from sqlalchemy.orm import Session          # type: ignore
-from sqlalchemy.exc import IntegrityError   # type: ignore
-from utils.api import HTTPException         # type: ignore
+from typing import List, Optional
+from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
+from coffeebreak.utils.api import HTTPException
 
 from ..models.transaction_template import TransactionTemplate
 from ..schemas import transaction_template as tp
+import logging
 
 class TransactionTemplateService:
     def __init__(self, db:Session):

@@ -1,14 +1,17 @@
 from typing import List
-from utils.api import Router, Depends, HTTPException    # type: ignore
-from dependencies.auth import check_role                # type: ignore
-from dependencies.database import get_db                # type: ignore
-from sqlalchemy.orm import Session                      # type: ignore
+from coffeebreak.utils.api import Router, Depends, HTTPException
+from coffeebreak.dependencies.auth import check_role
+from coffeebreak.dependencies.database import get_db
+from sqlalchemy.orm import Session
 
 from ..schemas.transaction_template import (
     Base, Update, Response
 )
 
-from ..services.transaction_template_service import TransactionTemplateService  # type: ignore
+from ..services.transaction_template_service import TransactionTemplateService
+import logging
+
+logger = logging.getLogger("coffeebreak.point-system.transaction-template")
 
 ROLE = "manage_transaction_templates"
 

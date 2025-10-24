@@ -1,6 +1,6 @@
-from sqlalchemy import Column, Integer, Text, DateTime, String # type: ignore
-from sqlalchemy.sql import func                                # type: ignore
-from dependencies.database import Base                         # type: ignore
+from sqlalchemy import Column, Integer, Text, DateTime, String
+from sqlalchemy.sql import func
+from coffeebreak.dependencies.database import Base
 
 class TransactionTemplate(Base):
     """

@@ -1,4 +1,4 @@
-from utils.api import Router # type: ignore
+from coffeebreak.utils.api import Router
 from .transaction_template import router as transaction_template_router
 
 router = Router()
