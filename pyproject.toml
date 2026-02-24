@@ -1,5 +1,17 @@
+[project]
+name = "coffeebreak-point-system-plugin"
+version = "0.1.0"
+dependencies = [
+    "httpx>=0.25.0",
+]
+
 [tool.coffeebreak]
 identifier = "coffeebreak-point-system-plugin"
 name = "Point System Plugin"
 description = "Integration with the external point system service for managing user points and leaderboards."
+components_dir = "components"
 config_page = true
+
+[[tool.coffeebreak.components]]
+name = "StaffPage"
+file = "StaffPage.jsx"

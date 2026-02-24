@@ -3,10 +3,10 @@ from pydantic import BaseModel, Field
 class Settings(BaseModel):
     """Plugin settings for the Point System Plugin"""
     point_system_url: str = Field(
-        default="http://localhost:8000",
+        default="http://point-system.deti4devs.pt",
         title="Point System Service URL",
         description="Base URL for the external point system service",
-        placeholder="http://localhost:8000"
+        placeholder="http://point-system.deti4devs.pt"
     )
     connection_timeout: float = Field(
         default=30.0,

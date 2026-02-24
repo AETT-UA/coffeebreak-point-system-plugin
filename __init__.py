@@ -1,5 +1,7 @@
 from .routes import router
+from .schemas.staffpage import StaffPage
 from .schemas.plugin_settings import Settings
+from coffeebreak import ComponentRegistry
 import logging
 
 logger = logging.getLogger("coffeebreak.point_system")
@@ -9,7 +11,9 @@ SETTINGS = Settings()
 
 async def REGISTER():
     logger.info("Point System Plugin registered successfully")
+    ComponentRegistry.register_component(StaffPage)
 
 
 def UNREGISTER():
     logger.info("Point System Plugin unregistered")
+    ComponentRegistry.unregister_component("StaffPage")

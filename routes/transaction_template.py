@@ -1,7 +1,7 @@
 from typing import List
-from utils.api import Router, Depends, HTTPException    # type: ignore
-from dependencies.auth import check_role                # type: ignore
-from dependencies.database import get_db                # type: ignore
+from coffeebreak.utils.api import Router, Depends, HTTPException    # type: ignore
+from coffeebreak.dependencies.auth import check_role                # type: ignore
+from coffeebreak.dependencies.database import get_db                # type: ignore
 from sqlalchemy.orm import Session                      # type: ignore
 
 from ..schemas.transaction_template import (

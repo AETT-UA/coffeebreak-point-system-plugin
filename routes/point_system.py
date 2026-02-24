@@ -1,4 +1,4 @@
-from utils.api import Router  # type: ignore
+from coffeebreak.utils.api import Router  # type: ignore
 from fastapi import HTTPException, Query, Depends, Path
 from typing import List, Optional
 import logging
@@ -112,7 +112,7 @@ async def get_user_activity_points(
 @router.post("/points/{user_id}/add")
 async def add_points(
     user_id: int = Path(..., description="User identifier"),
-    transaction: TransactionRequest = ..., 
+    transaction: TransactionRequest = ...,
     transaction_type: TransactionType = TransactionType.MANUAL,
 ):
     """
