@@ -19,16 +19,16 @@ class UpstreamPointSystemError(Exception):
 
 class PointSystemService:
     """Service for integrating with external point system"""
-    
+
     def __init__(self):
         # Default configuration - will be overridden by plugin settings
-        self.base_url = "http://localhost:8000"
+        self.base_url = "http://point-system.deti4devs.pt"
         self.timeout = 30.0
         self.retry_attempts = 3
         self.client = None
-        
+
         logger.info("PointSystemService initialized with default configuration")
-    
+
     def _load_settings_from_module(self):
         """Load plugin settings from the in-memory plugin module registry"""
         try:
@@ -47,31 +47,31 @@ class PointSystemService:
         except Exception as e:
             logger.warning(f"Failed to load plugin settings, using defaults: {e}")
             return False
-    
+
     async def _ensure_client(self):
         """Ensure HTTP client is initialized with current settings"""
         if self.client is None:
             # Try to load settings from module
             self._load_settings_from_module()
             self.client = httpx.AsyncClient(timeout=self.timeout)
-    
+
     async def __aenter__(self):
         await self._ensure_client()
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if self.client:
             await self.client.aclose()
-    
+
     def _get_url(self, endpoint: str) -> str:
         """Build full URL for endpoint"""
         return urljoin(self.base_url, endpoint)
-    
+
     async def _make_request(self, method: str, endpoint: str, **kwargs) -> dict:
         """Make HTTP request to external service with retry logic"""
         await self._ensure_client()
         url = self._get_url(endpoint)
-        
+
         for attempt in range(self.retry_attempts):
             try:
                 response = await self.client.request(method, url, **kwargs)
@@ -95,7 +95,7 @@ class PointSystemService:
             except Exception as e:
                 logger.error(f"Unexpected error for {url}: {e}")
                 raise
-        
+
         raise PointSystemUnavailable(f"Point system service at {self.base_url} did not respond after {self.retry_attempts} attempts")
 
     def _safe_int_compare(self, value1, value2):
@@ -261,7 +261,7 @@ class PointSystemService:
                     if 'history' in data and data['history']:
                         # Calculate balance for specific activity
                         activity_balance = sum(
-                            float(tx['points']) for tx in data['history'] 
+                            float(tx['points']) for tx in data['history']
                             if service._safe_int_compare(tx.get('activity_id'), activity_id)
                         )
                         return max(0, activity_balance)
@@ -290,16 +290,16 @@ class PointSystemService:
                         "description": transaction.description,
                         "activity_id": transaction.activity_id
                     }
-                    
+
                     # Map internal transaction type to external service type
                     type_param = "activity" if transaction_type == TransactionType.ACTIVITY else "manual"
-                    
+
                     data = await service._make_request(
-                        'POST', 
-                        f'/points/{user_id}/add?type={type_param}', 
+                        'POST',
+                        f'/points/{user_id}/add?type={type_param}',
                         json=tx_data
                     )
-                    
+
                     # Convert response to internal Transaction format with proper type casting
                     try:
                         return Transaction(

@@ -1,12 +1,12 @@
 """This router just calls the tests"""
 
-from utils.api import Router, Depends                   # type: ignore
-from dependencies.database import get_db                # type: ignore
+from coffeebreak.utils.api import Router, Depends                   # type: ignore
+from coffeebreak.dependencies.database import get_db                # type: ignore
 from sqlalchemy.orm import Session                      # type: ignore
 import logging
 
 from ..schemas.point_system import TransactionRequest, TransactionType
-from ..services.point_system_service import PointSystemService  
+from ..services.point_system_service import PointSystemService
 
 router = Router()
 logger = logging.getLogger("coffeebreak.point_system")
