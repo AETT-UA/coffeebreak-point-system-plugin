@@ -1,0 +1,5 @@
+[tool.coffeebreak]
+identifier = "coffeebreak-point-system-plugin"
+name = "Point System Plugin"
+description = "Integration with the external point system service for managing user points and leaderboards."
+config_page = true
