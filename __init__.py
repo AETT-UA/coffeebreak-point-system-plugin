@@ -1,21 +1,23 @@
+<<<<<<< HEAD
 from coffeebreak.utils.api import Router
 from .routes import router
 from .schemas.staffpage import StaffPage
 from .schemas.plugin_settings import Settings
 from coffeebreak.services.ui.plugin_settings import create_plugin_setting, generate_inputs_from_settings
 from coffeebreak.schemas.plugin_setting import PluginSetting
+=======
+from .routes import router
+from .schemas.staffpage import StaffPage
+from .schemas.plugin_settings import Settings
+>>>>>>> 3074779d6b7bfbaff6e5344cc7e2a6c797820e86
 from coffeebreak import ComponentRegistry
 import logging
 
 logger = logging.getLogger("coffeebreak.point_system")
 
-IDENTIFIER = "coffeebreak-point-system-plugin"  # must match plugin folder name
-NAME = "Point System Plugin"
-DESCRIPTION = "Integration with the external point system service for managing user points and leaderboards."
-
-# Create settings instance that will be managed by the plugin service
 SETTINGS = Settings()
 
+<<<<<<< HEAD
 # Generate plugin inputs from settings
 
 async def register_plugin():
@@ -31,8 +33,14 @@ def unregister_plugin():
     logger.info("Unregistering Point System Plugin...")
     # Plugin settings cleanup can be handled by the core system
     ComponentRegistry.unregister_component("StaffPage")  # Unregister the Transaction component
+=======
 
-REGISTER = register_plugin
-UNREGISTER = unregister_plugin
+async def REGISTER():
+    logger.info("Point System Plugin registered successfully")
+    ComponentRegistry.register_component(StaffPage)
 
-CONFIG_PAGE = True
+>>>>>>> 3074779d6b7bfbaff6e5344cc7e2a6c797820e86
+
+def UNREGISTER():
+    logger.info("Point System Plugin unregistered")
+    ComponentRegistry.unregister_component("StaffPage")

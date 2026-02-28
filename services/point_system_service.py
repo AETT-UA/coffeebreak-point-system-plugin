@@ -118,9 +118,13 @@ class PointSystemService:
                 logger.error(f"Unexpected error for {url}: {e}")
                 raise
 
+<<<<<<< HEAD
         raise PointSystemUnavailable(
             f"Point system service at {self.base_url} did not respond after {self.retry_attempts} attempts"
         )
+=======
+        raise PointSystemUnavailable(f"Point system service at {self.base_url} did not respond after {self.retry_attempts} attempts")
+>>>>>>> 3074779d6b7bfbaff6e5344cc7e2a6c797820e86
 
     def _safe_int_compare(self, value1, value2):
         """Safely compare two values that should be integers, handling string conversion"""
@@ -333,11 +337,16 @@ class PointSystemService:
                     if "history" in data and data["history"]:
                         # Calculate balance for specific activity
                         activity_balance = sum(
+<<<<<<< HEAD
                             float(tx["points"])
                             for tx in data["history"]
                             if service._safe_int_compare(
                                 tx.get("activity_id"), activity_id
                             )
+=======
+                            float(tx['points']) for tx in data['history']
+                            if service._safe_int_compare(tx.get('activity_id'), activity_id)
+>>>>>>> 3074779d6b7bfbaff6e5344cc7e2a6c797820e86
                         )
                         return max(0, activity_balance)
                     return 0.0
@@ -374,6 +383,7 @@ class PointSystemService:
                     }
 
                     # Map internal transaction type to external service type
+<<<<<<< HEAD
                     type_param = (
                         "activity"
                         if transaction_type == TransactionType.ACTIVITY
@@ -384,6 +394,16 @@ class PointSystemService:
                         "POST", f"/points/{user_id}/add?type={type_param}", json=tx_data
                     )
 
+=======
+                    type_param = "activity" if transaction_type == TransactionType.ACTIVITY else "manual"
+
+                    data = await service._make_request(
+                        'POST',
+                        f'/points/{user_id}/add?type={type_param}',
+                        json=tx_data
+                    )
+
+>>>>>>> 3074779d6b7bfbaff6e5344cc7e2a6c797820e86
                     # Convert response to internal Transaction format with proper type casting
                     try:
                         return Transaction(

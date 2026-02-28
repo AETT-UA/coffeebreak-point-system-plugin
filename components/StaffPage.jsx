@@ -63,42 +63,50 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
     setIsScannerActive(false);
   }, []);
 
-  const verifyQrPayload = useCallback(async (payload) => {
-    const otp = payload.trim();
-    if (!otp || verifyInProgressRef.current) {
-      return;
-    }
-
-    verifyInProgressRef.current = true;
-    setIsVerifying(true);
-    setScannerError(null);
-
-    try {
-      const api = getApi();
-      const response = await api.post("/totp/verify-totp", { otp });
-      const userId = response?.data?.user_id;
-
-      if (!userId) {
-        throw new Error("QR code verification did not return a user id.");
+  const verifyQrPayload = useCallback(
+    async (payload) => {
+      const otp = payload.trim();
+      if (!otp || verifyInProgressRef.current) {
+        return;
       }
 
-      setScannedUserId(String(userId));
-      setPointsInput("");
-      setDescriptionInput("");
-      setSuccessMessage("");
-      setSubmitError(null);
-      setStep("award");
-      stopScanner();
-    } catch (error) {
-      setScannerError(getErrorMessage(error, "Invalid or expired QR code."));
-    } finally {
-      setIsVerifying(false);
-      verifyInProgressRef.current = false;
-    }
-  }, [stopScanner]);
+      verifyInProgressRef.current = true;
+      setIsVerifying(true);
+      setScannerError(null);
+
+      try {
+        const api = getApi();
+        const response = await api.post("/totp/verify-totp", { otp });
+        const userId = response?.data?.user_id;
+
+        if (!userId) {
+          throw new Error("QR code verification did not return a user id.");
+        }
+
+        setScannedUserId(String(userId));
+        setPointsInput("");
+        setDescriptionInput("");
+        setSuccessMessage("");
+        setSubmitError(null);
+        setStep("award");
+        stopScanner();
+      } catch (error) {
+        setScannerError(getErrorMessage(error, "Invalid or expired QR code."));
+      } finally {
+        setIsVerifying(false);
+        verifyInProgressRef.current = false;
+      }
+    },
+    [stopScanner],
+  );
 
   const scanFrame = useCallback(async () => {
-    if (!detectorRef.current || !videoRef.current || scanInProgressRef.current || verifyInProgressRef.current) {
+    if (
+      !detectorRef.current ||
+      !videoRef.current ||
+      scanInProgressRef.current ||
+      verifyInProgressRef.current
+    ) {
       return;
     }
 
@@ -115,7 +123,9 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
         return;
       }
 
-      const firstQr = detections.find((item) => typeof item?.rawValue === "string" && item.rawValue.trim());
+      const firstQr = detections.find(
+        (item) => typeof item?.rawValue === "string" && item.rawValue.trim(),
+      );
       if (!firstQr) {
         return;
       }
@@ -134,7 +144,9 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
       await verifyQrPayload(rawValue);
     } catch (error) {
       if (step === "scan") {
-        setScannerError(getErrorMessage(error, "Unable to read the QR code from camera."));
+        setScannerError(
+          getErrorMessage(error, "Unable to read the QR code from camera."),
+        );
       }
     } finally {
       scanInProgressRef.current = false;
@@ -151,7 +163,9 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
     setSuccessMessage("");
 
     if (!supportsBarcodeDetector) {
-      setScannerError("This browser does not support live QR scanning. Use manual QR input below.");
+      setScannerError(
+        "This browser does not support live QR scanning. Use manual QR input below.",
+      );
       return;
     }
 
@@ -179,7 +193,9 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
 
-      detectorRef.current = new window.BarcodeDetector({ formats: ["qr_code"] });
+      detectorRef.current = new window.BarcodeDetector({
+        formats: ["qr_code"],
+      });
 
       scanIntervalRef.current = window.setInterval(() => {
         void scanFrame();
@@ -188,7 +204,12 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
       setIsScannerActive(true);
     } catch (error) {
       stopScanner();
-      setScannerError(getErrorMessage(error, "Could not start camera. Check browser permissions."));
+      setScannerError(
+        getErrorMessage(
+          error,
+          "Could not start camera. Check browser permissions.",
+        ),
+      );
     }
   }, [isScannerActive, scanFrame, stopScanner, supportsBarcodeDetector]);
 
@@ -202,47 +223,52 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
     await verifyQrPayload(manualQrInput);
   }, [manualQrInput, verifyQrPayload]);
 
-  const handleSubmitPoints = useCallback(async (event) => {
-    event.preventDefault();
+  const handleSubmitPoints = useCallback(
+    async (event) => {
+      event.preventDefault();
 
-    const parsedPoints = Number(pointsInput);
-    if (!Number.isFinite(parsedPoints) || parsedPoints <= 0) {
-      setSubmitError("Points must be a number greater than zero.");
-      return;
-    }
+      const parsedPoints = Number(pointsInput);
+      if (!Number.isFinite(parsedPoints) || parsedPoints <= 0) {
+        setSubmitError("Points must be a number greater than zero.");
+        return;
+      }
 
-    if (!scannedUserId) {
-      setSubmitError("Missing scanned user id.");
-      return;
-    }
+      if (!scannedUserId) {
+        setSubmitError("Missing scanned user id.");
+        return;
+      }
 
-    setSubmitError(null);
-    setIsSubmitting(true);
+      setSubmitError(null);
+      setIsSubmitting(true);
 
-    try {
-      const api = getApi();
-      await api.post(
-        `/coffeebreak-point-system-plugin/point-system/points/${encodeURIComponent(scannedUserId)}/add`,
-        {
-          activity_id: null,
-          points: parsedPoints,
-          description: descriptionInput.trim() || null,
-        },
-        {
-          params: {
-            transaction_type: "manual",
+      try {
+        const api = getApi();
+        await api.post(
+          `/coffeebreak-point-system-plugin/point-system/points/${encodeURIComponent(scannedUserId)}/add`,
+          {
+            activity_id: null,
+            points: parsedPoints,
+            description: descriptionInput.trim() || null,
           },
-        }
-      );
+          {
+            params: {
+              transaction_type: "manual",
+            },
+          },
+        );
 
-      setSuccessMessage(`Successfully awarded ${parsedPoints} points to ${scannedUserId}.`);
-      setStep("success");
-    } catch (error) {
-      setSubmitError(getErrorMessage(error, "Failed to award points."));
-    } finally {
-      setIsSubmitting(false);
-    }
-  }, [descriptionInput, pointsInput, scannedUserId]);
+        setSuccessMessage(
+          `Successfully awarded ${parsedPoints} points to ${scannedUserId}.`,
+        );
+        setStep("success");
+      } catch (error) {
+        setSubmitError(getErrorMessage(error, "Failed to award points."));
+      } finally {
+        setIsSubmitting(false);
+      }
+    },
+    [descriptionInput, pointsInput, scannedUserId],
+  );
 
   const handleScanAnother = useCallback(() => {
     setStep("scan");
@@ -300,7 +326,9 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
                     Stop scanner
                   </button>
                 )}
-                {isVerifying && <span className="text-sm">Verifying QR code...</span>}
+                {isVerifying && (
+                  <span className="text-sm">Verifying QR code...</span>
+                )}
               </div>
 
               <video
@@ -340,14 +368,17 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
               </button>
             </div>
 
-            {scannerError && <div className="alert alert-error text-sm">{scannerError}</div>}
+            {scannerError && (
+              <div className="alert alert-error text-sm">{scannerError}</div>
+            )}
           </>
         )}
 
         {step === "award" && (
           <form className="space-y-3" onSubmit={handleSubmitPoints}>
             <div className="alert alert-info text-sm">
-              Participant identified: <span className="font-semibold">{scannedUserId}</span>
+              Participant identified:{" "}
+              <span className="font-semibold">{scannedUserId}</span>
             </div>
 
             <label className="form-control w-full">
@@ -374,13 +405,23 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
               />
             </label>
 
-            {submitError && <div className="alert alert-error text-sm">{submitError}</div>}
+            {submitError && (
+              <div className="alert alert-error text-sm">{submitError}</div>
+            )}
 
             <div className="flex flex-wrap gap-2">
-              <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={isSubmitting}
+              >
                 {isSubmitting ? "Submitting..." : "Award points"}
               </button>
-              <button type="button" className="btn btn-ghost" onClick={handleScanAnother}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={handleScanAnother}
+              >
                 Scan another user
               </button>
             </div>
@@ -391,10 +432,18 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
           <div className="space-y-3">
             <div className="alert alert-success">{successMessage}</div>
             <div className="flex flex-wrap gap-2">
-              <button type="button" className="btn btn-primary" onClick={handleAwardMoreToSameUser}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleAwardMoreToSameUser}
+              >
                 Award more to same user
               </button>
-              <button type="button" className="btn btn-outline" onClick={handleScanAnother}>
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={handleScanAnother}
+              >
                 Scan another user
               </button>
             </div>
