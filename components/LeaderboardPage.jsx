@@ -28,6 +28,10 @@ function formatLastUpdated(dateValue) {
   }).format(dateValue);
 }
 
+function formatPoints(value) {
+  return new Intl.NumberFormat().format(value);
+}
+
 export default function LeaderboardPage({
   title = "Event Leaderboard",
   activity_id = null,
@@ -99,6 +103,10 @@ export default function LeaderboardPage({
           .map((item, index) => ({
             ...item,
             rank: index + 1,
+            display_name:
+              item.user_name && item.user_name !== item.user_id
+                ? item.user_name
+                : `Participant ${index + 1}`,
           }));
 
         setRows(normalized);
@@ -137,12 +145,12 @@ export default function LeaderboardPage({
   }, [loadLeaderboard, normalizedRefreshSeconds]);
 
   return (
-    <section className="card bg-base-100 shadow-md border border-base-300">
+    <section className="card bg-base-100/95 shadow-lg border border-base-300 rounded-2xl overflow-hidden">
       <div className="card-body gap-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="card-title">{title}</h2>
-            <p className="text-sm text-base-content/70">
+            <h2 className="card-title text-2xl">{title}</h2>
+            <p className="text-sm text-base-content/70 mt-1">
               {activity_id
                 ? `Showing activity leaderboard for activity ${activity_id}.`
                 : "Showing the global event leaderboard."}
@@ -150,7 +158,7 @@ export default function LeaderboardPage({
           </div>
           <button
             type="button"
-            className="btn btn-outline btn-sm"
+            className="btn btn-outline btn-sm rounded-xl"
             onClick={() => {
               void loadLeaderboard({ silent: true });
             }}
@@ -160,8 +168,15 @@ export default function LeaderboardPage({
           </button>
         </div>
 
-        <div className="text-xs text-base-content/60">
-          Last updated: {formatLastUpdated(lastUpdatedAt)}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className="rounded-xl border border-base-300 bg-base-200/50 px-3 py-2 text-sm">
+            <span className="text-base-content/60">Last updated: </span>
+            <span className="font-medium">{formatLastUpdated(lastUpdatedAt)}</span>
+          </div>
+          <div className="rounded-xl border border-base-300 bg-base-200/50 px-3 py-2 text-sm">
+            <span className="text-base-content/60">Entries: </span>
+            <span className="font-medium">{rows.length}</span>
+          </div>
         </div>
 
         {isLoading && (
@@ -178,59 +193,26 @@ export default function LeaderboardPage({
         )}
 
         {!isLoading && !error && rows.length > 0 && (
-          <>
-            <div className="hidden md:block overflow-x-auto">
-              <table className="table table-zebra">
-                <thead>
-                  <tr>
-                    {show_rank && <th>Rank</th>}
-                    <th>Participant</th>
-                    <th className="text-right">Points</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((entry) => (
-                    <tr key={`${entry.user_id}-${entry.rank}`}>
-                      {show_rank && (
-                        <td>
-                          <span className="badge badge-ghost">#{entry.rank}</span>
-                        </td>
-                      )}
-                      <td>
-                        <div className="font-medium">{entry.user_name}</div>
-                        {entry.user_name !== entry.user_id && (
-                          <div className="text-xs text-base-content/60">{entry.user_id}</div>
-                        )}
-                      </td>
-                      <td className="text-right font-semibold">{entry.points}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="md:hidden grid grid-cols-1 gap-2">
-              {rows.map((entry) => (
-                <div
-                  key={`${entry.user_id}-${entry.rank}`}
-                  className="rounded-lg border border-base-300 p-3 bg-base-100"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <div className="font-medium break-all">{entry.user_name}</div>
-                      {entry.user_name !== entry.user_id && (
-                        <div className="text-xs text-base-content/60 break-all">{entry.user_id}</div>
-                      )}
-                    </div>
-                    {show_rank && <span className="badge badge-ghost">#{entry.rank}</span>}
-                  </div>
-                  <div className="mt-1 text-sm text-base-content/70">
-                    Points: <span className="font-semibold text-base-content">{entry.points}</span>
-                  </div>
+          <div className="grid grid-cols-1 gap-6">
+            {rows.map((entry) => (
+              <article
+                key={`${entry.user_id}-${entry.rank}`}
+                className="rounded-xl border border-base-300 bg-base-100 px-5 py-4"
+              >
+                <div className="flex items-center gap-4">
+                  {show_rank && (
+                    <span className="w-14 shrink-0 text-sm font-semibold text-base-content/70">
+                      #{entry.rank}
+                    </span>
+                  )}
+                  <h3 className="flex-1 font-semibold text-base break-words">
+                    {entry.display_name}
+                  </h3>
+                  <span className="text-2xl font-bold">{formatPoints(entry.points)}</span>
                 </div>
-              ))}
-            </div>
-          </>
+              </article>
+            ))}
+          </div>
         )}
       </div>
     </section>
