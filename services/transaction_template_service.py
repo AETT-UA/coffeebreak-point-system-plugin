@@ -1,7 +1,7 @@
 from typing import List, Optional           # type: ignore
 from sqlalchemy.orm import Session          # type: ignore
 from sqlalchemy.exc import IntegrityError   # type: ignore
-from utils.api import HTTPException         # type: ignore
+from coffeebreak.utils.api import HTTPException         # type: ignore
 
 from ..models.transaction_template import TransactionTemplate
 from ..schemas import transaction_template as tp
@@ -28,19 +28,19 @@ class TransactionTemplateService:
                 status_code=400,
                 detail="Template with this name already exists"
             )
-        
+
         # check if a template with the same name already exists
         # This prevents the id to increase unnecessarily
         existing_template = self.db.query(TransactionTemplate).filter(
                 TransactionTemplate.name == template.name
             ).first()
-        
+
         if existing_template:
             fail()
-            
+
         template_data = {k: v for k, v in template.__dict__.items() if v is not None}
         db_template = TransactionTemplate(**template_data)
-        
+
         try:
             self.db.add(db_template)
             self.db.commit()

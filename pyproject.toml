@@ -8,5 +8,14 @@ dependencies = [
 [tool.coffeebreak]
 identifier = "coffeebreak-point-system-plugin"
 name = "Point System Plugin"
-description = "Integration with the external point system service for managing user points and leaderboards."
+description = "The plugin allows for the usage of the point system"
+components_dir = "components"
 config_page = true
+
+[[tool.coffeebreak.components]]
+name = "StaffPage"
+file = "StaffPage.jsx"
+
+[[tool.coffeebreak.components]]
+name = "LeaderboardPage"
+file = "LeaderboardPage.jsx"
