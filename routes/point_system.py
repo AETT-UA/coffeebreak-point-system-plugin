@@ -15,6 +15,7 @@ from ..services.point_system_service import (
     PointSystemService,
     PointSystemUnavailable,
     UpstreamPointSystemError,
+    UserIdMappingError,
 )
 
 logger = logging.getLogger("coffeebreak.point_system")
@@ -80,6 +81,8 @@ async def get_user_points(user_id: str = Path(..., description="User identifier"
     try:
         points = await PointSystemService.points.get(user_id)
         return {"user_id": user_id, "points": points}
+    except UserIdMappingError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except PointSystemUnavailable as e:
         raise HTTPException(status_code=502, detail=str(e))
     except UpstreamPointSystemError as e:
@@ -98,6 +101,8 @@ async def get_user_history(user_id: str = Path(..., description="User identifier
     """
     try:
         return await PointSystemService.points.get_history(user_id)
+    except UserIdMappingError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except PointSystemUnavailable as e:
         raise HTTPException(status_code=502, detail=str(e))
     except UpstreamPointSystemError as e:
@@ -120,6 +125,8 @@ async def get_user_activity_points(
     try:
         points = await PointSystemService.points.get_in_activity(user_id, activity_id)
         return {"user_id": user_id, "activity_id": activity_id, "points": points}
+    except UserIdMappingError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except PointSystemUnavailable as e:
         raise HTTPException(status_code=502, detail=str(e))
     except UpstreamPointSystemError as e:
@@ -152,6 +159,8 @@ async def add_points(
             return {"message": "Points added successfully", "transaction": result}
         else:
             raise HTTPException(status_code=500, detail="Failed to create transaction")
+    except UserIdMappingError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except PointSystemUnavailable as e:
         raise HTTPException(status_code=502, detail=str(e))
     except UpstreamPointSystemError as e:
@@ -164,7 +173,7 @@ async def add_points(
 @router.post("/points/{user_id}/remove")
 async def remove_points(
     user_id: str = Path(..., description="User identifier"),
-    points: float = Query(..., description="Points to remove"),
+    points: int = Query(..., description="Points to remove"),
     description: str = Query(..., description="Reason for removal"),
 ):
     """
@@ -182,6 +191,8 @@ async def remove_points(
             }
         else:
             raise HTTPException(status_code=500, detail="Failed to remove points")
+    except UserIdMappingError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except PointSystemUnavailable as e:
         raise HTTPException(status_code=502, detail=str(e))
     except UpstreamPointSystemError as e:

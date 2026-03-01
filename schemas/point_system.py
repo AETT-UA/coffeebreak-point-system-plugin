@@ -10,7 +10,8 @@ class SimpleUser(BaseModel):
     """
 
     id: str
-    points: float
+    name: Optional[str] = None
+    points: int
 
 
 class TransactionType(str, Enum):
@@ -35,7 +36,7 @@ class Transaction(BaseModel):
         ..., description="ID of the user associated with the transaction"
     )
     issued_by_id: Optional[str] = Field(None, description="ID")
-    points: float = Field(..., description="Points associated with the transaction")
+    points: int = Field(..., description="Points associated with the transaction")
     transaction_type: TransactionType = Field(
         ..., description="Type of the transaction (e.g., 'manual', 'activity')"
     )
@@ -56,7 +57,7 @@ class TransactionRequest(BaseModel):
     activity_id: Optional[int] = Field(
         None, description="ID of the activity associated with the transaction"
     )
-    points: float = Field(..., description="Points to be added or subtracted")
+    points: int = Field(..., description="Points to be added or subtracted")
     description: Optional[str] = Field(
         None, description="Description of the transaction"
     )

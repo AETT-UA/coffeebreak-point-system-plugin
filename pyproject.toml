@@ -8,3 +8,7 @@ config_page = true
 [[tool.coffeebreak.components]]
 name = "StaffPage"
 file = "StaffPage.jsx"
+
+[[tool.coffeebreak.components]]
+name = "LeaderboardPage"
+file = "LeaderboardPage.jsx"

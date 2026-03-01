@@ -1,7 +1,12 @@
-from typing import List, Optional  # type: ignore
+from typing import Dict, List, Optional, Tuple  # type: ignore
+import asyncio
 import logging
 import httpx
 from urllib.parse import urljoin
+from time import monotonic
+from hashlib import sha256
+
+from coffeebreak.auth import get_user, list_users
 
 from ..schemas.point_system import (
     SimpleUser,
@@ -24,8 +29,16 @@ class UpstreamPointSystemError(Exception):
         self.detail = detail
 
 
+class UserIdMappingError(Exception):
+    pass
+
+
 class PointSystemService:
     """Service for integrating with external point system"""
+
+    _user_name_cache: Dict[str, Tuple[float, str]] = {}
+    _user_name_cache_ttl_seconds = 300
+    _external_user_name_cache: Tuple[float, Dict[int, str]] = (0, {})
 
     def __init__(self):
         # Default configuration - will be overridden by plugin settings
@@ -133,6 +146,211 @@ class PointSystemService:
         except (ValueError, TypeError):
             return False
 
+    @staticmethod
+    def _round_points(value) -> int:
+        """Round a numeric point value to the nearest integer (half away from zero)."""
+        numeric = float(value)
+
+        if numeric >= 0:
+            return int(numeric + 0.5)
+
+        return int(numeric - 0.5)
+
+    @staticmethod
+    def _parse_int(value) -> Optional[int]:
+        if value is None:
+            return None
+
+        if isinstance(value, bool):
+            return None
+
+        if isinstance(value, int):
+            return value
+
+        if isinstance(value, float):
+            if value.is_integer():
+                return int(value)
+            return None
+
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return None
+            try:
+                return int(stripped)
+            except ValueError:
+                return None
+
+        return None
+
+    @classmethod
+    def _extract_coffeebreak_numeric_id(cls, user: dict) -> Optional[int]:
+        if not isinstance(user, dict):
+            return None
+
+        candidate_fields = [
+            user.get("coffeebreak_id"),
+            user.get("coffeebreakId"),
+            user.get("point_system_user_id"),
+            user.get("pointSystemUserId"),
+        ]
+
+        attributes = user.get("attributes")
+        if isinstance(attributes, dict):
+            for key in (
+                "coffeebreak_id",
+                "coffeebreakId",
+                "point_system_user_id",
+                "pointSystemUserId",
+            ):
+                candidate = attributes.get(key)
+                if isinstance(candidate, list):
+                    candidate = candidate[0] if candidate else None
+                candidate_fields.append(candidate)
+
+        for candidate in candidate_fields:
+            parsed = cls._parse_int(candidate)
+            if parsed is not None:
+                return parsed
+
+        return None
+
+    @staticmethod
+    def _display_name_from_user(user: dict, fallback: str) -> str:
+        if not isinstance(user, dict):
+            return fallback
+
+        first_name = str(user.get("firstName") or "").strip()
+        last_name = str(user.get("lastName") or "").strip()
+        full_name = f"{first_name} {last_name}".strip()
+        username = str(user.get("username") or "").strip()
+
+        return full_name or username or fallback
+
+    @staticmethod
+    def _fallback_external_user_id(coffeebreak_user_id: str) -> int:
+        digest = sha256(coffeebreak_user_id.encode("utf-8")).digest()
+        value = int.from_bytes(digest[:4], byteorder="big") & 0x7FFFFFFF
+
+        if value < 1_000_000_000:
+            value += 1_000_000_000
+
+        return value
+
+    @classmethod
+    async def _resolve_external_user_id(cls, user_id: str) -> int:
+        parsed_direct = cls._parse_int(user_id)
+        if parsed_direct is not None:
+            return parsed_direct
+
+        try:
+            user = await get_user(user_id)
+        except Exception as e:
+            raise UserIdMappingError(
+                f"Could not resolve CoffeeBreak user '{user_id}' to a numeric point-system user id: {e}"
+            ) from e
+
+        mapped_id = cls._extract_coffeebreak_numeric_id(user)
+        if mapped_id is None:
+            mapped_id = cls._fallback_external_user_id(user_id)
+            logger.warning(
+                "User %s has no explicit coffeebreak_id mapping; using deterministic fallback id %s",
+                user_id,
+                mapped_id,
+            )
+
+        return mapped_id
+
+    @classmethod
+    async def _get_external_user_name_map(cls) -> Dict[int, str]:
+        now = monotonic()
+        expires_at, cached = cls._external_user_name_cache
+        if cached and expires_at > now:
+            return cached
+
+        resolved: Dict[int, str] = {}
+        try:
+            users = await list_users()
+            for user in users:
+                external_id = cls._extract_coffeebreak_numeric_id(user)
+                if external_id is None:
+                    keycloak_user_id = str(user.get("id") or "").strip()
+                    if keycloak_user_id:
+                        external_id = cls._fallback_external_user_id(keycloak_user_id)
+                if external_id is None:
+                    continue
+
+                resolved[external_id] = cls._display_name_from_user(
+                    user,
+                    fallback=str(external_id),
+                )
+        except Exception as e:
+            logger.warning(f"Failed to build external user id -> name map: {e}")
+
+        cls._external_user_name_cache = (
+            now + cls._user_name_cache_ttl_seconds,
+            resolved,
+        )
+        return resolved
+
+    @classmethod
+    async def _resolve_user_name(cls, user_id: str) -> str:
+        """Resolve display name for a CoffeeBreak user id with a short TTL cache."""
+        now = monotonic()
+        cached = cls._user_name_cache.get(user_id)
+        if cached and cached[0] > now:
+            return cached[1]
+
+        resolved_name = user_id
+
+        try:
+            user = await get_user(user_id)
+            resolved_name = cls._display_name_from_user(user, fallback=user_id)
+        except Exception as e:
+            parsed_external_id = cls._parse_int(user_id)
+            if parsed_external_id is not None:
+                external_names = await cls._get_external_user_name_map()
+                resolved_name = external_names.get(parsed_external_id, user_id)
+            else:
+                logger.warning(f"Failed to resolve user name for {user_id}: {e}")
+
+        cls._user_name_cache[user_id] = (
+            now + cls._user_name_cache_ttl_seconds,
+            resolved_name,
+        )
+        return resolved_name
+
+    @classmethod
+    async def _build_leaderboard_entries(cls, data: list) -> List[SimpleUser]:
+        """Convert upstream leaderboard payload into enriched leaderboard entries."""
+        raw_entries = []
+
+        if not isinstance(data, list):
+            return []
+
+        for raw_entry in data:
+            try:
+                user_id = str(raw_entry["user_id"])
+                points = cls._round_points(raw_entry["points"])
+            except (KeyError, TypeError, ValueError):
+                continue
+
+            raw_entries.append((user_id, points))
+
+        if not raw_entries:
+            return []
+
+        unique_user_ids = list(dict.fromkeys(user_id for user_id, _ in raw_entries))
+        resolved_names = await asyncio.gather(
+            *(cls._resolve_user_name(user_id) for user_id in unique_user_ids)
+        )
+        name_by_id = dict(zip(unique_user_ids, resolved_names))
+
+        return [
+            SimpleUser(id=user_id, name=name_by_id.get(user_id, user_id), points=points)
+            for user_id, points in raw_entries
+        ]
+
     class leaderboard:
         @classmethod
         async def get(cls) -> List[SimpleUser]:
@@ -145,13 +363,7 @@ class PointSystemService:
                 service = PointSystemService()
                 async with service:
                     data = await service._make_request("GET", "/leaderboard/")
-                    # Convert LeaderboardEntry to SimpleUser with explicit casting
-                    return [
-                        SimpleUser(
-                            id=str(entry["user_id"]), points=float(entry["points"])
-                        )
-                        for entry in data
-                    ]
+                    return await PointSystemService._build_leaderboard_entries(data)
             except Exception as e:
                 logger.error(f"Failed to get global leaderboard: {e}")
                 raise
@@ -171,13 +383,7 @@ class PointSystemService:
                     data = await service._make_request(
                         "GET", f"/leaderboard/{activity_id}/"
                     )
-                    # Convert LeaderboardEntry to SimpleUser with explicit casting
-                    return [
-                        SimpleUser(
-                            id=str(entry["user_id"]), points=float(entry["points"])
-                        )
-                        for entry in data
-                    ]
+                    return await PointSystemService._build_leaderboard_entries(data)
             except Exception as e:
                 logger.error(
                     f"Failed to get activity leaderboard for {activity_id}: {e}"
@@ -186,7 +392,7 @@ class PointSystemService:
 
     class points:
         @classmethod
-        async def get(cls, user_id: str) -> float:
+        async def get(cls, user_id: str) -> int:
             """
             Retrieve the points of a specific user.
             Args:
@@ -197,26 +403,27 @@ class PointSystemService:
             try:
                 service = PointSystemService()
                 async with service:
+                    external_user_id = await service._resolve_external_user_id(user_id)
                     # Get user history and calculate current balance
                     data = await service._make_request(
-                        "GET", f"/points/{user_id}/history"
+                        "GET", f"/points/{external_user_id}/history"
                     )
                     history = data.get("history") if isinstance(data, dict) else None
                     if isinstance(history, list) and history:
-                        total = 0.0
+                        total = 0
                         for tx in history:
                             try:
-                                total += float(tx.get("points", 0))
+                                total += service._round_points(tx.get("points", 0))
                             except (ValueError, TypeError):
                                 continue
                         return max(0, total)
-                    return 0.0
+                    return 0
             except Exception as e:
                 logger.error(f"Failed to get points for user {user_id}: {e}")
                 raise
 
         @classmethod
-        async def remove(cls, user_id: str, points: float) -> bool:
+        async def remove(cls, user_id: str, points: int) -> bool:
             """
             Remove points from a specific user.
             Args:
@@ -228,12 +435,13 @@ class PointSystemService:
             try:
                 service = PointSystemService()
                 async with service:
+                    external_user_id = await service._resolve_external_user_id(user_id)
                     removal_data = {
                         "points": points,
                         "description": f"Manual removal of {points} points",
                     }
                     await service._make_request(
-                        "POST", f"/points/{user_id}/remove", json=removal_data
+                        "POST", f"/points/{external_user_id}/remove", json=removal_data
                     )
                     logger.info(
                         f"Successfully removed {points} points from user {user_id}"
@@ -257,8 +465,9 @@ class PointSystemService:
             try:
                 service = PointSystemService()
                 async with service:
+                    external_user_id = await service._resolve_external_user_id(user_id)
                     data = await service._make_request(
-                        "GET", f"/points/{user_id}/history"
+                        "GET", f"/points/{external_user_id}/history"
                     )
                     history = data.get("history") if isinstance(data, dict) else None
                     if isinstance(history, list):
@@ -286,9 +495,9 @@ class PointSystemService:
                                     else None
                                 )
                                 tx_points = (
-                                    float(tx_data["points"])
+                                    service._round_points(tx_data["points"])
                                     if tx_data.get("points") is not None
-                                    else 0.0
+                                    else 0
                                 )
                                 if tx_id is None or tx_user_id is None:
                                     continue
@@ -314,7 +523,7 @@ class PointSystemService:
                 raise
 
         @classmethod
-        async def get_in_activity(cls, user_id: str, activity_id: int) -> float:
+        async def get_in_activity(cls, user_id: str, activity_id: int) -> int:
             """
             Retrieve the points of a specific user in a specific activity.
             Args:
@@ -326,21 +535,22 @@ class PointSystemService:
             try:
                 service = PointSystemService()
                 async with service:
+                    external_user_id = await service._resolve_external_user_id(user_id)
                     # Get user history and filter by activity
                     data = await service._make_request(
-                        "GET", f"/points/{user_id}/history"
+                        "GET", f"/points/{external_user_id}/history"
                     )
                     if "history" in data and data["history"]:
                         # Calculate balance for specific activity
                         activity_balance = sum(
-                            float(tx["points"])
+                            service._round_points(tx["points"])
                             for tx in data["history"]
                             if service._safe_int_compare(
                                 tx.get("activity_id"), activity_id
                             )
                         )
                         return max(0, activity_balance)
-                    return 0.0
+                    return 0
             except Exception as e:
                 logger.error(
                     f"Failed to get points for user {user_id} in activity {activity_id}: {e}"
@@ -366,6 +576,7 @@ class PointSystemService:
             try:
                 service = PointSystemService()
                 async with service:
+                    external_user_id = await service._resolve_external_user_id(user_id)
                     # Prepare transaction data for external service
                     tx_data = {
                         "points": transaction.points,
@@ -381,21 +592,27 @@ class PointSystemService:
                     )
 
                     data = await service._make_request(
-                        "POST", f"/points/{user_id}/add?type={type_param}", json=tx_data
+                        "POST",
+                        f"/points/{external_user_id}/add?type={type_param}",
+                        json=tx_data,
                     )
 
                     # Convert response to internal Transaction format with proper type casting
                     try:
+                        returned_user_id = str(data["user_id"])
+                        if service._parse_int(user_id) is None:
+                            returned_user_id = user_id
+
                         return Transaction(
                             id=int(data["id"]),
                             activity_id=int(data["activity_id"])
                             if data.get("activity_id") is not None
                             else None,
-                            user_id=str(data["user_id"]),
+                            user_id=returned_user_id,
                             issued_by_id=str(data["issued_by_id"])
                             if data.get("issued_by_id") is not None
                             else None,
-                            points=float(data["points"]),
+                            points=service._round_points(data["points"]),
                             transaction_type=TransactionType(data["transaction_type"]),
                             description=data.get("description"),
                             created_at=data["created_at"],

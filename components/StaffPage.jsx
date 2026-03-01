@@ -228,8 +228,8 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
       event.preventDefault();
 
       const parsedPoints = Number(pointsInput);
-      if (!Number.isFinite(parsedPoints) || parsedPoints <= 0) {
-        setSubmitError("Points must be a number greater than zero.");
+      if (!Number.isInteger(parsedPoints) || parsedPoints <= 0) {
+        setSubmitError("Points must be an integer greater than zero.");
         return;
       }
 
@@ -385,8 +385,8 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
               <span className="label-text mb-1">Points to award</span>
               <input
                 type="number"
-                min="0.01"
-                step="0.01"
+                min="1"
+                step="1"
                 className="input input-bordered w-full"
                 value={pointsInput}
                 onChange={(event) => setPointsInput(event.target.value)}
