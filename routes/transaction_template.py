@@ -100,9 +100,22 @@ async def execute_template(
         if template.activity_id is not None
         else TransactionType.MANUAL
     )
+
+    points_mode = str(
+        getattr(template, "points_mode", "automatic") or "automatic"
+    ).lower()
+    if points_mode == "manual":
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "This template is configured for manual points input and cannot be executed directly. "
+                "Use the staff activity scan flow."
+            ),
+        )
+
     request = TransactionRequest(
         activity_id=template.activity_id,
-        points=template.points,
+        points=PointSystemService._round_points(template.points),
         description=template.description or f"Template execution: {template.name}",
     )
 

@@ -1,9 +1,20 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { getApi } from "coffeebreak/event-app";
+import { getApi, useActivity } from "coffeebreak/event-app";
 
 const SCAN_INTERVAL_MS = 450;
 const DUPLICATE_SCAN_COOLDOWN_MS = 2500;
+
+const STEP_CHOOSE_MODE = "choose_mode";
+const STEP_MANUAL_SCAN = "manual_scan";
+const STEP_MANUAL_AWARD = "manual_award";
+const STEP_ACTIVITY_SELECT = "activity_select";
+const STEP_ACTIVITY_SCAN = "activity_scan";
+const STEP_ACTIVITY_MANUAL_AWARD = "activity_manual_award";
+const STEP_SUCCESS = "success";
+
+const MODE_MANUAL = "manual";
+const MODE_ACTIVITY = "activity";
 
 function getErrorMessage(error, fallbackMessage) {
   const detail = error?.response?.data?.detail;
@@ -17,17 +28,30 @@ function getErrorMessage(error, fallbackMessage) {
 }
 
 export default function StaffPage({ title = "Staff QR Scanner" }) {
-  const [step, setStep] = useState("scan");
+  const { activities = [], loading: activitiesLoading, error: activitiesError } = useActivity();
+
+  const [step, setStep] = useState(STEP_CHOOSE_MODE);
+  const [mode, setMode] = useState(null);
+
   const [isScannerActive, setIsScannerActive] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
   const [scannerError, setScannerError] = useState(null);
-  const [submitError, setSubmitError] = useState(null);
+  const [flowError, setFlowError] = useState(null);
+
   const [scannedUserId, setScannedUserId] = useState("");
   const [pointsInput, setPointsInput] = useState("");
+  const [activityPointsInput, setActivityPointsInput] = useState("");
   const [descriptionInput, setDescriptionInput] = useState("");
   const [manualQrInput, setManualQrInput] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+
+  const [selectedActivityId, setSelectedActivityId] = useState("");
+  const [templatesByActivity, setTemplatesByActivity] = useState({});
+  const [duplicateActivityIds, setDuplicateActivityIds] = useState([]);
+  const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
+  const [templatesError, setTemplatesError] = useState(null);
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -39,6 +63,47 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
 
   const isBrowser = typeof window !== "undefined";
   const supportsBarcodeDetector = isBrowser && "BarcodeDetector" in window;
+
+  const activityOptions = useMemo(() => {
+    const options = [];
+    for (const activity of activities) {
+      const activityId = Number(activity.id);
+      if (!Number.isInteger(activityId)) {
+        continue;
+      }
+
+      const templates = templatesByActivity[activityId];
+      if (!Array.isArray(templates) || templates.length !== 1) {
+        continue;
+      }
+
+      const template = templates[0];
+      const label =
+        typeof activity?.name === "string" && activity.name.trim() ? activity.name.trim() : null;
+
+      if (!label) {
+        continue;
+      }
+
+      options.push({
+        id: activityId,
+        name: label,
+        points: Number(template.points ?? 0),
+        pointsMode:
+          typeof template.points_mode === "string" && template.points_mode.trim()
+            ? template.points_mode.trim().toLowerCase()
+            : "automatic",
+        templateName: template.name,
+      });
+    }
+
+    options.sort((left, right) => left.name.localeCompare(right.name));
+    return options;
+  }, [activities, templatesByActivity]);
+
+  const selectedActivity = useMemo(() => {
+    return activityOptions.find((activity) => String(activity.id) === selectedActivityId) || null;
+  }, [activityOptions, selectedActivityId]);
 
   const stopScanner = useCallback(() => {
     if (scanIntervalRef.current) {
@@ -63,6 +128,140 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
     setIsScannerActive(false);
   }, []);
 
+  const resetTransientState = useCallback(() => {
+    setScannerError(null);
+    setFlowError(null);
+    setManualQrInput("");
+    setSuccessMessage("");
+    setScannedUserId("");
+    verifyInProgressRef.current = false;
+    scanInProgressRef.current = false;
+    lastScannedRef.current = { value: "", at: 0 };
+  }, []);
+
+  const chooseManualMode = useCallback(() => {
+    stopScanner();
+    resetTransientState();
+    setMode(MODE_MANUAL);
+    setPointsInput("");
+    setActivityPointsInput("");
+    setDescriptionInput("");
+    setStep(STEP_MANUAL_SCAN);
+  }, [resetTransientState, stopScanner]);
+
+  const chooseActivityMode = useCallback(() => {
+    stopScanner();
+    resetTransientState();
+    setMode(MODE_ACTIVITY);
+    setSelectedActivityId("");
+    setPointsInput("");
+    setActivityPointsInput("");
+    setDescriptionInput("");
+    setStep(STEP_ACTIVITY_SELECT);
+  }, [resetTransientState, stopScanner]);
+
+  const backToModeChooser = useCallback(() => {
+    stopScanner();
+    resetTransientState();
+    setMode(null);
+    setPointsInput("");
+    setActivityPointsInput("");
+    setDescriptionInput("");
+    setSelectedActivityId("");
+    setStep(STEP_CHOOSE_MODE);
+  }, [resetTransientState, stopScanner]);
+
+  const resetForNextParticipant = useCallback(() => {
+    stopScanner();
+    resetTransientState();
+    setPointsInput("");
+    setActivityPointsInput("");
+    setDescriptionInput("");
+
+    if (mode === MODE_ACTIVITY) {
+      setStep(STEP_ACTIVITY_SCAN);
+      return;
+    }
+
+    setStep(STEP_MANUAL_SCAN);
+  }, [mode, resetTransientState, stopScanner]);
+
+  const submitActivityAward = useCallback(
+    async (userId, manualPoints = null) => {
+      const activityId = Number(selectedActivityId);
+      if (!Number.isInteger(activityId)) {
+        setFlowError("Select an activity before scanning a QR code.");
+        return;
+      }
+
+      if (!selectedActivity) {
+        setFlowError("Select an activity before scanning a QR code.");
+        return;
+      }
+
+      const pointsMode = selectedActivity.pointsMode === "manual" ? "manual" : "automatic";
+      let requestBody = {};
+
+      if (pointsMode === "manual") {
+        if (!Number.isInteger(manualPoints) || manualPoints <= 0) {
+          setFlowError("Points must be an integer greater than zero.");
+          return;
+        }
+        requestBody = { points: manualPoints };
+      }
+
+      setFlowError(null);
+      setIsSubmitting(true);
+
+      try {
+        const api = getApi();
+        const response = await api.post(
+          `/coffeebreak-point-system-plugin/point-system/points/${encodeURIComponent(userId)}/add-activity/${activityId}`,
+          requestBody,
+        );
+
+        const awardedPoints = Number(response?.data?.awarded_points ?? selectedActivity?.points ?? 0);
+        const activityName = selectedActivity?.name || `Activity ${activityId}`;
+
+        setSuccessMessage(
+          `Successfully awarded ${awardedPoints} points for ${activityName}.`,
+        );
+        setStep(STEP_SUCCESS);
+      } catch (error) {
+        setFlowError(getErrorMessage(error, "Failed to add activity points."));
+      } finally {
+        setIsSubmitting(false);
+      }
+    },
+    [selectedActivity, selectedActivityId],
+  );
+
+  const onVerifiedUser = useCallback(
+    async (userId) => {
+      setScannedUserId(userId);
+
+      if (mode === MODE_MANUAL) {
+        setPointsInput("");
+        setDescriptionInput("");
+        setFlowError(null);
+        setStep(STEP_MANUAL_AWARD);
+        return;
+      }
+
+      if (mode === MODE_ACTIVITY) {
+        if (selectedActivity?.pointsMode === "manual") {
+          setActivityPointsInput("");
+          setFlowError(null);
+          setStep(STEP_ACTIVITY_MANUAL_AWARD);
+          return;
+        }
+
+        await submitActivityAward(userId);
+      }
+    },
+    [mode, selectedActivity, submitActivityAward],
+  );
+
   const verifyQrPayload = useCallback(
     async (payload) => {
       const otp = payload.trim();
@@ -73,6 +272,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
       verifyInProgressRef.current = true;
       setIsVerifying(true);
       setScannerError(null);
+      setFlowError(null);
 
       try {
         const api = getApi();
@@ -83,13 +283,8 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
           throw new Error("QR code verification did not return a user id.");
         }
 
-        setScannedUserId(String(userId));
-        setPointsInput("");
-        setDescriptionInput("");
-        setSuccessMessage("");
-        setSubmitError(null);
-        setStep("award");
         stopScanner();
+        await onVerifiedUser(String(userId));
       } catch (error) {
         setScannerError(getErrorMessage(error, "Invalid or expired QR code."));
       } finally {
@@ -97,7 +292,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
         verifyInProgressRef.current = false;
       }
     },
-    [stopScanner],
+    [onVerifiedUser, stopScanner],
   );
 
   const scanFrame = useCallback(async () => {
@@ -143,24 +338,29 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
       lastScannedRef.current = { value: rawValue, at: now };
       await verifyQrPayload(rawValue);
     } catch (error) {
-      if (step === "scan") {
-        setScannerError(
-          getErrorMessage(error, "Unable to read the QR code from camera."),
-        );
-      }
+      setScannerError(getErrorMessage(error, "Unable to read the QR code from camera."));
     } finally {
       scanInProgressRef.current = false;
     }
-  }, [step, verifyQrPayload]);
+  }, [verifyQrPayload]);
 
   const startScanner = useCallback(async () => {
     if (isScannerActive) {
       return;
     }
 
+    const isScanStep = step === STEP_MANUAL_SCAN || step === STEP_ACTIVITY_SCAN;
+    if (!isScanStep) {
+      return;
+    }
+
+    if (mode === MODE_ACTIVITY && !selectedActivity) {
+      setFlowError("Select an activity before starting the scanner.");
+      return;
+    }
+
     setScannerError(null);
-    setSubmitError(null);
-    setSuccessMessage("");
+    setFlowError(null);
 
     if (!supportsBarcodeDetector) {
       setScannerError(
@@ -193,9 +393,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
 
-      detectorRef.current = new window.BarcodeDetector({
-        formats: ["qr_code"],
-      });
+      detectorRef.current = new window.BarcodeDetector({ formats: ["qr_code"] });
 
       scanIntervalRef.current = window.setInterval(() => {
         void scanFrame();
@@ -205,13 +403,57 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
     } catch (error) {
       stopScanner();
       setScannerError(
-        getErrorMessage(
-          error,
-          "Could not start camera. Check browser permissions.",
-        ),
+        getErrorMessage(error, "Could not start camera. Check browser permissions."),
       );
     }
-  }, [isScannerActive, scanFrame, stopScanner, supportsBarcodeDetector]);
+  }, [
+    isScannerActive,
+    mode,
+    scanFrame,
+    selectedActivity,
+    step,
+    stopScanner,
+    supportsBarcodeDetector,
+  ]);
+
+  useEffect(() => {
+    const loadTemplates = async () => {
+      setIsLoadingTemplates(true);
+      setTemplatesError(null);
+
+      try {
+        const api = getApi();
+        const response = await api.get("/coffeebreak-point-system-plugin/transaction-template");
+        const templates = Array.isArray(response.data) ? response.data : [];
+
+        const grouped = {};
+        for (const template of templates) {
+          const activityId = Number(template?.activity_id);
+          if (!Number.isInteger(activityId)) {
+            continue;
+          }
+
+          if (!grouped[activityId]) {
+            grouped[activityId] = [];
+          }
+          grouped[activityId].push(template);
+        }
+
+        setTemplatesByActivity(grouped);
+        setDuplicateActivityIds(
+          Object.entries(grouped)
+            .filter(([, list]) => Array.isArray(list) && list.length > 1)
+            .map(([activityId]) => Number(activityId)),
+        );
+      } catch (error) {
+        setTemplatesError(getErrorMessage(error, "Failed to load activity point templates."));
+      } finally {
+        setIsLoadingTemplates(false);
+      }
+    };
+
+    loadTemplates();
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -223,22 +465,28 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
     await verifyQrPayload(manualQrInput);
   }, [manualQrInput, verifyQrPayload]);
 
-  const handleSubmitPoints = useCallback(
+  const handleManualSubmit = useCallback(
     async (event) => {
       event.preventDefault();
 
       const parsedPoints = Number(pointsInput);
       if (!Number.isInteger(parsedPoints) || parsedPoints <= 0) {
-        setSubmitError("Points must be an integer greater than zero.");
+        setFlowError("Points must be an integer greater than zero.");
+        return;
+      }
+
+      const description = descriptionInput.trim();
+      if (!description) {
+        setFlowError("Description is required for manual point attribution.");
         return;
       }
 
       if (!scannedUserId) {
-        setSubmitError("Missing scanned user id.");
+        setFlowError("Missing scanned user id.");
         return;
       }
 
-      setSubmitError(null);
+      setFlowError(null);
       setIsSubmitting(true);
 
       try {
@@ -248,7 +496,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
           {
             activity_id: null,
             points: parsedPoints,
-            description: descriptionInput.trim() || null,
+            description,
           },
           {
             params: {
@@ -257,12 +505,10 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
           },
         );
 
-        setSuccessMessage(
-          `Successfully awarded ${parsedPoints} points to ${scannedUserId}.`,
-        );
-        setStep("success");
+        setSuccessMessage(`Successfully awarded ${parsedPoints} points.`);
+        setStep(STEP_SUCCESS);
       } catch (error) {
-        setSubmitError(getErrorMessage(error, "Failed to award points."));
+        setFlowError(getErrorMessage(error, "Failed to award manual points."));
       } finally {
         setIsSubmitting(false);
       }
@@ -270,26 +516,40 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
     [descriptionInput, pointsInput, scannedUserId],
   );
 
-  const handleScanAnother = useCallback(() => {
-    setStep("scan");
-    setScannedUserId("");
-    setPointsInput("");
-    setDescriptionInput("");
-    setManualQrInput("");
-    setSuccessMessage("");
-    setSubmitError(null);
-    setScannerError(null);
-    verifyInProgressRef.current = false;
-    scanInProgressRef.current = false;
-  }, []);
+  const handleActivityManualSubmit = useCallback(
+    async (event) => {
+      event.preventDefault();
 
-  const handleAwardMoreToSameUser = useCallback(() => {
-    setPointsInput("");
-    setDescriptionInput("");
-    setSubmitError(null);
-    setSuccessMessage("");
-    setStep("award");
-  }, []);
+      if (!scannedUserId) {
+        setFlowError("Missing scanned user id.");
+        return;
+      }
+
+      const parsedPoints = Number(activityPointsInput);
+      if (!Number.isInteger(parsedPoints) || parsedPoints <= 0) {
+        setFlowError("Points must be an integer greater than zero.");
+        return;
+      }
+
+      await submitActivityAward(scannedUserId, parsedPoints);
+    },
+    [activityPointsInput, scannedUserId, submitActivityAward],
+  );
+
+  const continueToActivityScan = useCallback(() => {
+    if (!selectedActivity) {
+      setFlowError("Select an activity before scanning.");
+      return;
+    }
+
+    resetTransientState();
+    setStep(STEP_ACTIVITY_SCAN);
+  }, [resetTransientState, selectedActivity]);
+
+  const scannerTitle =
+    step === STEP_ACTIVITY_SCAN
+      ? "Scan participant QR code for activity attribution"
+      : "Scan participant QR code for manual attribution";
 
   return (
     <div className="card bg-base-100 shadow-md">
@@ -297,12 +557,105 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
         <div>
           <h1 className="card-title">{title}</h1>
           <p className="text-sm text-base-content/70">
-            Scan a participant QR code and award points manually.
+            Choose the attribution mode, then follow the guided flow.
           </p>
         </div>
 
-        {step === "scan" && (
+        {step === STEP_CHOOSE_MODE && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <button type="button" className="btn btn-primary h-14" onClick={chooseManualMode}>
+              Add manual points
+            </button>
+            <button type="button" className="btn btn-secondary h-14" onClick={chooseActivityMode}>
+              Add activity participation points
+            </button>
+          </div>
+        )}
+
+        {step === STEP_ACTIVITY_SELECT && (
+          <div className="space-y-3">
+            <div className="rounded-xl border border-base-300 bg-base-100 p-3">
+              <label className="form-control w-full">
+                <span className="label-text mb-1">Select activity</span>
+                <select
+                  className="select select-bordered w-full"
+                  value={selectedActivityId}
+                  onChange={(event) => setSelectedActivityId(event.target.value)}
+                  disabled={isLoadingTemplates || activitiesLoading}
+                >
+                  <option value="">Choose an activity</option>
+                  {activityOptions.map((activity) => (
+                    <option key={activity.id} value={String(activity.id)}>
+                      {activity.name} - {activity.pointsMode === "manual" ? "manual points input" : `${activity.points} auto points`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {selectedActivity && (
+              <div className="alert alert-info text-sm">
+                <span>
+                  {selectedActivity.pointsMode === "manual"
+                    ? `Selected ${selectedActivity.name}. After scanning, enter points manually and transaction will stay tied to this activity.`
+                    : `Selected ${selectedActivity.name}. Participants will receive ${selectedActivity.points} points automatically.`}
+                </span>
+              </div>
+            )}
+
+            {duplicateActivityIds.length > 0 && (
+              <div className="alert alert-warning text-sm">
+                <span>
+                  Some activities have multiple templates configured and are hidden from selection.
+                </span>
+              </div>
+            )}
+
+            {templatesError && <div className="alert alert-error text-sm">{templatesError}</div>}
+            {activitiesError && <div className="alert alert-error text-sm">{activitiesError}</div>}
+
+            {!isLoadingTemplates && !activitiesLoading && activityOptions.length === 0 && !templatesError && (
+              <div className="alert alert-warning text-sm">
+                <span>
+                  No activity point templates are configured yet. Create one template per activity first.
+                </span>
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={continueToActivityScan}
+                disabled={!selectedActivity || isLoadingTemplates || activitiesLoading}
+              >
+                Continue to QR scan
+              </button>
+              <button type="button" className="btn btn-ghost" onClick={backToModeChooser}>
+                Back
+              </button>
+            </div>
+          </div>
+        )}
+
+        {(step === STEP_MANUAL_SCAN || step === STEP_ACTIVITY_SCAN) && (
           <>
+            {step === STEP_ACTIVITY_SCAN && selectedActivity && (
+              <div className="alert alert-info text-sm">
+                <span>
+                  {selectedActivity.pointsMode === "manual" ? (
+                    <>
+                      Activity: <span className="font-semibold">{selectedActivity.name}</span> - points entered after scan
+                    </>
+                  ) : (
+                    <>
+                      Activity: <span className="font-semibold">{selectedActivity.name}</span> - {selectedActivity.points} points
+                    </>
+                  )}
+                </span>
+              </div>
+            )}
+
             <div className="rounded-xl border border-base-300 bg-base-200/50 p-3">
               <div className="mb-3 flex flex-wrap items-center gap-2">
                 {!isScannerActive ? (
@@ -312,7 +665,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
                     onClick={() => {
                       void startScanner();
                     }}
-                    disabled={isVerifying}
+                    disabled={isVerifying || isSubmitting}
                   >
                     Start camera scanner
                   </button>
@@ -321,15 +674,19 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
                     type="button"
                     className="btn btn-outline btn-sm"
                     onClick={stopScanner}
-                    disabled={isVerifying}
+                    disabled={isVerifying || isSubmitting}
                   >
                     Stop scanner
                   </button>
                 )}
-                {isVerifying && (
-                  <span className="text-sm">Verifying QR code...</span>
+                {(isVerifying || isSubmitting) && (
+                  <span className="text-sm">
+                    {isVerifying ? "Verifying QR code..." : "Submitting points..."}
+                  </span>
                 )}
               </div>
+
+              <p className="text-sm text-base-content/70 mb-2">{scannerTitle}</p>
 
               <video
                 ref={videoRef}
@@ -347,9 +704,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
             </div>
 
             <div className="rounded-xl border border-base-300 bg-base-100 p-3">
-              <label className="mb-2 block text-sm font-medium">
-                Manual QR payload (fallback)
-              </label>
+              <label className="mb-2 block text-sm font-medium">Manual QR payload (fallback)</label>
               <textarea
                 className="textarea textarea-bordered h-24 w-full"
                 value={manualQrInput}
@@ -362,23 +717,24 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
                 onClick={() => {
                   void handleManualVerify();
                 }}
-                disabled={isVerifying || !manualQrInput.trim()}
+                disabled={isVerifying || isSubmitting || !manualQrInput.trim()}
               >
                 Verify QR manually
               </button>
             </div>
 
-            {scannerError && (
-              <div className="alert alert-error text-sm">{scannerError}</div>
-            )}
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="btn btn-ghost" onClick={backToModeChooser}>
+                Back
+              </button>
+            </div>
           </>
         )}
 
-        {step === "award" && (
-          <form className="space-y-3" onSubmit={handleSubmitPoints}>
+        {step === STEP_MANUAL_AWARD && (
+          <form className="space-y-3" onSubmit={handleManualSubmit}>
             <div className="alert alert-info text-sm">
-              Participant identified:{" "}
-              <span className="font-semibold">{scannedUserId}</span>
+              Participant identified: <span className="font-semibold">{scannedUserId}</span>
             </div>
 
             <label className="form-control w-full">
@@ -396,59 +752,103 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
             </label>
 
             <label className="form-control w-full">
-              <span className="label-text mb-1">Description (optional)</span>
+              <span className="label-text mb-1">Description (required)</span>
               <textarea
                 className="textarea textarea-bordered h-24 w-full"
                 value={descriptionInput}
                 onChange={(event) => setDescriptionInput(event.target.value)}
                 placeholder="Why these points were awarded"
+                required
               />
             </label>
 
-            {submitError && (
-              <div className="alert alert-error text-sm">{submitError}</div>
-            )}
-
             <div className="flex flex-wrap gap-2">
-              <button
-                type="submit"
-                className="btn btn-primary"
-                disabled={isSubmitting}
-              >
+              <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
                 {isSubmitting ? "Submitting..." : "Award points"}
               </button>
               <button
                 type="button"
                 className="btn btn-ghost"
-                onClick={handleScanAnother}
+                onClick={() => {
+                  setStep(STEP_MANUAL_SCAN);
+                  setPointsInput("");
+                  setDescriptionInput("");
+                  setFlowError(null);
+                }}
               >
-                Scan another user
+                Rescan participant
+              </button>
+              <button type="button" className="btn btn-outline" onClick={backToModeChooser}>
+                Change mode
               </button>
             </div>
           </form>
         )}
 
-        {step === "success" && (
-          <div className="space-y-3">
-            <div className="alert alert-success">{successMessage}</div>
+        {step === STEP_ACTIVITY_MANUAL_AWARD && (
+          <form className="space-y-3" onSubmit={handleActivityManualSubmit}>
+            <div className="alert alert-info text-sm">
+              Participant identified: <span className="font-semibold">{scannedUserId}</span>
+            </div>
+
+            {selectedActivity && (
+              <div className="alert alert-info text-sm">
+                Activity: <span className="font-semibold">{selectedActivity.name}</span>
+              </div>
+            )}
+
+            <label className="form-control w-full">
+              <span className="label-text mb-1">Points to award for this activity</span>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                className="input input-bordered w-full"
+                value={activityPointsInput}
+                onChange={(event) => setActivityPointsInput(event.target.value)}
+                placeholder="e.g. 10"
+                required
+              />
+            </label>
+
             <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={handleAwardMoreToSameUser}
-              >
-                Award more to same user
+              <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
+                {isSubmitting ? "Submitting..." : "Award activity points"}
               </button>
               <button
                 type="button"
-                className="btn btn-outline"
-                onClick={handleScanAnother}
+                className="btn btn-ghost"
+                onClick={() => {
+                  setStep(STEP_ACTIVITY_SCAN);
+                  setActivityPointsInput("");
+                  setFlowError(null);
+                }}
               >
-                Scan another user
+                Rescan participant
+              </button>
+              <button type="button" className="btn btn-outline" onClick={backToModeChooser}>
+                Change mode
+              </button>
+            </div>
+          </form>
+        )}
+
+        {step === STEP_SUCCESS && (
+          <div className="space-y-3">
+            <div className="alert alert-success">{successMessage}</div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="btn btn-primary" onClick={resetForNextParticipant}>
+                Scan another participant
+              </button>
+              <button type="button" className="btn btn-outline" onClick={backToModeChooser}>
+                Change mode
               </button>
             </div>
           </div>
         )}
+
+        {scannerError && <div className="alert alert-error text-sm">{scannerError}</div>}
+        {flowError && <div className="alert alert-error text-sm">{flowError}</div>}
       </div>
     </div>
   );

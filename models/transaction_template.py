@@ -16,6 +16,7 @@ class TransactionTemplate(Base):
     deleted_at = Column(DateTime(timezone=True), nullable=True)
 
     activity_id = Column(Integer, nullable=True)
+    points_mode = Column(String, nullable=False, server_default="automatic")
     points = Column(Double, nullable=False)
     description = Column(Text, nullable=True)
     claim_limit = Column(Integer, nullable=True, default=0)

@@ -1,10 +1,13 @@
-from typing import Dict, List, Optional, Tuple  # type: ignore
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Tuple
 import asyncio
 import logging
 import httpx
 from urllib.parse import urljoin
+from coffeebreak.services.plugin_service import get_plugin_settings
 from time import monotonic
 from hashlib import sha256
+from datetime import datetime, timezone
 
 from coffeebreak.auth import get_user, list_users
 
@@ -50,23 +53,18 @@ class PointSystemService:
         logger.info("PointSystemService initialized with default configuration")
 
     def _load_settings_from_module(self):
-        """Load plugin settings from the in-memory plugin module registry"""
+        """Load plugin settings from plugin service"""
         try:
-            from plugin_loader import plugins_modules  # lazy import to avoid cycles
-
-            if "coffeebreak-point-system-plugin" in plugins_modules:
-                plugin_module = plugins_modules["coffeebreak-point-system-plugin"]
-                if hasattr(plugin_module, "SETTINGS"):
-                    settings = plugin_module.SETTINGS
-                    self.base_url = settings.point_system_url
-                    self.timeout = float(settings.connection_timeout)
-                    self.retry_attempts = int(settings.retry_attempts)
-                    logger.info(
-                        f"Loaded plugin settings: URL={self.base_url}, Timeout={self.timeout}s"
-                    )
-                    return True
-            logger.warning("Plugin module or SETTINGS not found, using defaults")
-            return False
+            settings = get_plugin_settings("coffeebreak-point-system-plugin")
+            self.base_url = settings.get("point_system_url", self.base_url)
+            self.timeout = float(settings.get("connection_timeout", self.timeout))
+            self.retry_attempts = int(
+                settings.get("retry_attempts", self.retry_attempts)
+            )
+            logger.info(
+                f"Loaded plugin settings: URL={self.base_url}, Timeout={self.timeout}s"
+            )
+            return True
         except Exception as e:
             logger.warning(f"Failed to load plugin settings, using defaults: {e}")
             return False
@@ -262,9 +260,7 @@ class PointSystemService:
         return mapped_id
 
     @classmethod
-    @classmethod
     async def _get_external_user_name_map(cls) -> Dict[int, dict]:
-        """Get mapping of external user id -> user data (name and username)."""
         now = monotonic()
         expires_at, cached = cls._external_user_name_cache
         if cached and expires_at > now:
@@ -284,7 +280,7 @@ class PointSystemService:
 
                 resolved[external_id] = {
                     "name": cls._display_name_from_user(user, fallback=str(external_id)),
-                    "username": user.get("username") or user.get("email"),
+                    "username": user.get("username") or user.get("email")
                 }
         except Exception as e:
             logger.warning(f"Failed to build external user id -> name map: {e}")
@@ -298,77 +294,8 @@ class PointSystemService:
     @classmethod
     async def _resolve_user_name(cls, user_id: str) -> str:
         """Resolve display name for a CoffeeBreak user id with a short TTL cache."""
-        now = monotonic()
-        cached = cls._user_name_cache.get(user_id)
-        if cached and cached[0] > now:
-            return cached[1]["name"]
-
-        user_data = {"name": user_id, "username": None}
-
-        try:
-            user = await get_user(user_id)
-            user_data["name"] = cls._display_name_from_user(user, fallback=user_id)
-            user_data["username"] = user.get("username") or user.get("email")
-        except Exception as e:
-            parsed_external_id = cls._parse_int(user_id)
-            if parsed_external_id is not None:
-                external_data = await cls._get_external_user_name_map()
-                fetched = external_data.get(parsed_external_id, {})
-                user_data["name"] = fetched.get("name", user_id)
-                user_data["username"] = fetched.get("username")
-            else:
-                logger.warning(f"Failed to resolve user name for {user_id}: {e}")
-
-        cls._user_name_cache[user_id] = (
-            now + cls._user_name_cache_ttl_seconds,
-            user_data,
-        )
+        user_data = await cls._get_user_data(user_id)
         return user_data["name"]
-
-    @classmethod
-    async def _build_leaderboard_entries(cls, data: list) -> List[SimpleUser]:
-        """Convert upstream leaderboard payload into enriched leaderboard entries."""
-        raw_entries = []
-
-        if not isinstance(data, list):
-            return []
-
-        for raw_entry in data:
-            try:
-                user_id = str(raw_entry["user_id"])
-                points = cls._round_points(raw_entry["points"])
-            except (KeyError, TypeError, ValueError):
-                continue
-
-            raw_entries.append((user_id, points))
-
-        if not raw_entries:
-            return []
-
-        unique_user_ids = list(dict.fromkeys(user_id for user_id, _ in raw_entries))
-        
-        # Fetch user data in parallel
-        user_data_list = await asyncio.gather(
-            *(cls._get_user_data(user_id) for user_id in unique_user_ids),
-            return_exceptions=True
-        )
-        
-        user_data_by_id = {}
-        for user_id, user_data in zip(unique_user_ids, user_data_list):
-            if isinstance(user_data, Exception):
-                user_data_by_id[user_id] = {"name": user_id, "username": None}
-            else:
-                user_data_by_id[user_id] = user_data
-
-        return [
-            SimpleUser(
-                id=user_id,
-                name=user_data_by_id.get(user_id, {}).get("name", user_id),
-                username=user_data_by_id.get(user_id, {}).get("username"),
-                points=points
-            )
-            for user_id, points in raw_entries
-        ]
 
     @classmethod
     async def _get_user_data(cls, user_id: str) -> dict:
@@ -399,6 +326,104 @@ class PointSystemService:
             user_data,
         )
         return user_data
+
+    @classmethod
+    async def _build_leaderboard_entries(cls, data: list) -> List[SimpleUser]:
+        """Convert upstream leaderboard payload into enriched leaderboard entries."""
+        raw_entries = []
+
+        if not isinstance(data, list):
+            return []
+
+        for raw_entry in data:
+            try:
+                user_id = str(raw_entry["user_id"])
+                points = cls._round_points(raw_entry["points"])
+            except (KeyError, TypeError, ValueError):
+                continue
+
+            raw_entries.append((user_id, points))
+
+        if not raw_entries:
+            return []
+
+        unique_user_ids = list(dict.fromkeys(user_id for user_id, _ in raw_entries))
+        resolved_data = await asyncio.gather(
+            *(cls._get_user_data(user_id) for user_id in unique_user_ids)
+        )
+        data_by_id = dict(zip(unique_user_ids, resolved_data))
+
+        return [
+            SimpleUser(
+                id=user_id,
+                name=data_by_id.get(user_id, {}).get("name", user_id),
+                username=data_by_id.get(user_id, {}).get("username"),
+                points=points
+            )
+            for user_id, points in raw_entries
+        ]
+
+    class health:
+        @classmethod
+        async def check(cls) -> dict:
+            try:
+                service = PointSystemService()
+                async with service:
+                    return await service._make_request("GET", "/health")
+            except Exception as e:
+                logger.error(f"Health check failed: {e}")
+                raise
+
+    class transactions:
+        @classmethod
+        async def list(
+            cls,
+            activity_id: Optional[int] = None,
+            user_id: Optional[int] = None,
+            transaction_type: Optional[str] = None,
+            skip: int = 0,
+            limit: int = 50,
+        ) -> List[Transaction]:
+            try:
+                service = PointSystemService()
+                async with service:
+                    params: dict[str, object] = {"skip": skip, "limit": limit}
+                    if activity_id is not None:
+                        params["activity_id"] = activity_id
+                    if user_id is not None:
+                        params["user_id"] = user_id
+                    if transaction_type is not None:
+                        params["transaction_type"] = transaction_type
+                    data = await service._make_request(
+                        "GET", "/points/transactions", params=params
+                    )
+                    results = []
+                    for tx_data in data:
+                        try:
+                            results.append(
+                                Transaction(
+                                    id=int(tx_data["id"]),
+                                    activity_id=int(tx_data["activity_id"])
+                                    if tx_data.get("activity_id") is not None
+                                    else None,
+                                    user_id=str(tx_data["user_id"]),
+                                    issued_by_id=str(tx_data["issued_by_id"])
+                                    if tx_data.get("issued_by_id") is not None
+                                    else None,
+                                    points=float(tx_data["points"]),
+                                    transaction_type=TransactionType(
+                                        tx_data["transaction_type"]
+                                    ),
+                                    description=tx_data.get("description"),
+                                    created_at=tx_data["created_at"],
+                                )
+                            )
+                        except (ValueError, TypeError, KeyError):
+                            continue
+                    return results
+            except Exception as e:
+                logger.error(f"Failed to list transactions: {e}")
+                raise
 
     class leaderboard:
         @classmethod
@@ -472,7 +497,13 @@ class PointSystemService:
                 raise
 
         @classmethod
-        async def remove(cls, user_id: str, points: int) -> bool:
+        async def remove(
+            cls,
+            user_id: str,
+            points: float,
+            description: str,
+            activity_id: Optional[int] = None,
+        ) -> bool:
             """
             Remove points from a specific user.
             Args:
@@ -486,8 +517,9 @@ class PointSystemService:
                 async with service:
                     external_user_id = await service._resolve_external_user_id(user_id)
                     removal_data = {
+                        "activity_id": activity_id,
                         "points": points,
-                        "description": f"Manual removal of {points} points",
+                        "description": description,
                     }
                     await service._make_request(
                         "POST", f"/points/{external_user_id}/remove", json=removal_data
@@ -627,11 +659,14 @@ class PointSystemService:
                 async with service:
                     external_user_id = await service._resolve_external_user_id(user_id)
                     # Prepare transaction data for external service
-                    tx_data = {
+                    tx_data: dict[str, object] = {
                         "points": transaction.points,
                         "description": transaction.description,
                         "activity_id": transaction.activity_id,
                     }
+
+                    if transaction_type == TransactionType.ACTIVITY:
+                        tx_data["timestamp"] = datetime.now(timezone.utc).isoformat()
 
                     # Map internal transaction type to external service type
                     type_param = (
@@ -639,6 +674,8 @@ class PointSystemService:
                         if transaction_type == TransactionType.ACTIVITY
                         else "manual"
                     )
+                    if transaction_type == TransactionType.ACTIVITY:
+                        tx_data["timestamp"] = datetime.now(timezone.utc).isoformat()
 
                     data = await service._make_request(
                         "POST",

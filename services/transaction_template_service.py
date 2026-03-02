@@ -1,8 +1,9 @@
-from typing import List, Optional
 from datetime import datetime, timezone
-from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
+from typing import List, Optional
+
 from coffeebreak.utils.api import HTTPException
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from ..models.transaction_template import TransactionTemplate
 from ..models.transaction_template_permission import (
@@ -21,8 +22,54 @@ class TransactionTemplateService:
             TransactionTemplate.deleted_at.is_(None)
         )
 
+    @staticmethod
+    def _normalize_points_mode(value) -> str:
+        if value is None:
+            return "automatic"
+
+        if hasattr(value, "value"):
+            value = value.value
+
+        mode = str(value).strip().lower()
+        if mode in {"automatic", "manual"}:
+            return mode
+
+        raise HTTPException(
+            status_code=422,
+            detail="points_mode must be either 'automatic' or 'manual'.",
+        )
+
+    @staticmethod
+    def _round_points(value) -> int:
+        numeric = float(value)
+        if numeric >= 0:
+            return int(numeric + 0.5)
+        return int(numeric - 0.5)
+
+    @classmethod
+    def _validate_template_points_mode(cls, points_mode: str, points: int):
+        if points_mode == "automatic" and points <= 0:
+            raise HTTPException(
+                status_code=422,
+                detail="Automatic templates require points greater than zero.",
+            )
+
+        if points_mode == "manual" and points < 0:
+            raise HTTPException(
+                status_code=422,
+                detail="Manual templates require points to be zero or greater.",
+            )
+
     def create_template(self, template: tp.Base) -> TransactionTemplate:
         template_data = {k: v for k, v in template.dict().items() if v is not None}
+        points_mode = self._normalize_points_mode(template_data.get("points_mode"))
+        points_value = self._round_points(template_data.get("points", 0))
+
+        self._validate_template_points_mode(points_mode, points_value)
+
+        template_data["points_mode"] = points_mode
+        template_data["points"] = points_value
+
         db_template = TransactionTemplate(**template_data)
 
         try:
@@ -36,6 +83,15 @@ class TransactionTemplateService:
 
     def list_templates(self) -> List[TransactionTemplate]:
         return self._active_query().all()
+
+    def list_templates_for_activity(
+        self, activity_id: int
+    ) -> List[TransactionTemplate]:
+        return (
+            self._active_query()
+            .filter(TransactionTemplate.activity_id == activity_id)
+            .all()
+        )
 
     def get_template(self, template_id: int) -> Optional[TransactionTemplate]:
         return (
@@ -52,6 +108,15 @@ class TransactionTemplateService:
         for key, value in template_data.dict(exclude_unset=True).items():
             if value is not None:
                 setattr(db_template, key, value)
+
+        points_mode = self._normalize_points_mode(
+            getattr(db_template, "points_mode", None)
+        )
+        points_value = self._round_points(getattr(db_template, "points", 0))
+        self._validate_template_points_mode(points_mode, points_value)
+
+        db_template.points_mode = points_mode
+        db_template.points = points_value
 
         try:
             self.db.commit()

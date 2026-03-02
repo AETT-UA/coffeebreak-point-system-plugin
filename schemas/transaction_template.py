@@ -1,58 +1,54 @@
-from pydantic import BaseModel, Field, field_validator  # type: ignore
-from typing import Optional, List
 from datetime import datetime
+from enum import Enum
+from typing import List, Optional
+
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+class PointsMode(str, Enum):
+    AUTOMATIC = "automatic"
+    MANUAL = "manual"
 
 
 class Base(BaseModel):
-    """
-    Base schema for Transaction templates
-    Attributes:
-        name (str): Unique name for the template
-        points (float): Points associated with the transaction
-    """
-
-    name: str = Field(..., min_length=1, description="Unique name for the template")
-    activity_id: Optional[int] = Field(
-        None, description="ID of the associated activity"
+    name: str = Field(..., min_length=1, description="Template name")
+    activity_id: Optional[int] = Field(None, description="Associated activity ID")
+    points: int = Field(
+        0,
+        description=(
+            "Points for this transaction. Used when points_mode is automatic; ignored when manual."
+        ),
     )
-    points: float = Field(..., description="Points associated with the transaction")
-    description: Optional[str] = Field(
-        None, description="Description of the transaction template"
+    points_mode: PointsMode = Field(
+        default=PointsMode.AUTOMATIC,
+        description=(
+            "automatic uses template points directly; manual requires staff to enter points after scan"
+        ),
     )
+    description: Optional[str] = Field(None, description="Template description")
     claim_limit: Optional[int] = Field(
-        0, description="Maximum number of claims allowed for this template (0 = unlimited)"
+        0, description="Max claims allowed (0 = unlimited)"
     )
+
+    @model_validator(mode="after")
+    def validate_points_mode(self):
+        if self.points_mode == PointsMode.AUTOMATIC and self.points <= 0:
+            raise ValueError("Automatic templates require points greater than zero.")
+        if self.points_mode == PointsMode.MANUAL and self.points < 0:
+            raise ValueError("Manual templates require points to be zero or greater.")
+        return self
 
 
 class Update(BaseModel):
-    """
-    Schema for updating Transaction template fields
-    All fields are optional since it's a partial update
-    """
-
-    name: Optional[str] = Field(
-        None, min_length=1, description="Unique name for the template"
-    )
-    activity_id: Optional[int] = Field(
-        None, description="ID of the associated activity"
-    )
-    points: Optional[float] = Field(
-        None, description="Points associated with the transaction"
-    )
-    description: Optional[str] = Field(
-        None, description="Description of the transaction template"
-    )
-    claim_limit: Optional[int] = Field(
-        None, description="Maximum number of claims allowed for this template"
-    )
+    name: Optional[str] = Field(None, min_length=1)
+    activity_id: Optional[int] = Field(None)
+    points: Optional[int] = Field(None)
+    points_mode: Optional[PointsMode] = Field(None)
+    description: Optional[str] = Field(None)
+    claim_limit: Optional[int] = Field(None)
 
 
 class Response(Base):
-    """
-    Schema for Transaction template response
-    Includes database fields like id and timestamps
-    """
-
     id: int
     original_name: Optional[str] = None
     created_at: datetime
@@ -70,8 +66,10 @@ class Response(Base):
         except (TypeError, ValueError):
             return value
 
-        # Since points is now float, just return the float value
-        return numeric
+        if numeric >= 0:
+            return int(numeric + 0.5)
+
+        return int(numeric - 0.5)
 
 
 class ExecuteRequest(BaseModel):

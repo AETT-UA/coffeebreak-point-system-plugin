@@ -62,3 +62,16 @@ class TransactionRequest(BaseModel):
     description: Optional[str] = Field(
         None, description="Description of the transaction"
     )
+
+
+class ActivityAwardRequest(BaseModel):
+    """
+    Request schema for awarding points through an activity template.
+    """
+
+    points: Optional[int] = Field(
+        None,
+        description=(
+            "Required only for activity templates configured with manual points_mode."
+        ),
+    )
