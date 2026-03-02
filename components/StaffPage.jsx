@@ -10,6 +10,7 @@ const STEP_MANUAL_SCAN = "manual_scan";
 const STEP_MANUAL_AWARD = "manual_award";
 const STEP_ACTIVITY_SELECT = "activity_select";
 const STEP_ACTIVITY_SCAN = "activity_scan";
+const STEP_ACTIVITY_MANUAL_AWARD = "activity_manual_award";
 const STEP_SUCCESS = "success";
 
 const MODE_MANUAL = "manual";
@@ -41,6 +42,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
 
   const [scannedUserId, setScannedUserId] = useState("");
   const [pointsInput, setPointsInput] = useState("");
+  const [activityPointsInput, setActivityPointsInput] = useState("");
   const [descriptionInput, setDescriptionInput] = useState("");
   const [manualQrInput, setManualQrInput] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -87,6 +89,10 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
         id: activityId,
         name: label,
         points: Number(template.points ?? 0),
+        pointsMode:
+          typeof template.points_mode === "string" && template.points_mode.trim()
+            ? template.points_mode.trim().toLowerCase()
+            : "automatic",
         templateName: template.name,
       });
     }
@@ -138,6 +144,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
     resetTransientState();
     setMode(MODE_MANUAL);
     setPointsInput("");
+    setActivityPointsInput("");
     setDescriptionInput("");
     setStep(STEP_MANUAL_SCAN);
   }, [resetTransientState, stopScanner]);
@@ -148,6 +155,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
     setMode(MODE_ACTIVITY);
     setSelectedActivityId("");
     setPointsInput("");
+    setActivityPointsInput("");
     setDescriptionInput("");
     setStep(STEP_ACTIVITY_SELECT);
   }, [resetTransientState, stopScanner]);
@@ -157,6 +165,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
     resetTransientState();
     setMode(null);
     setPointsInput("");
+    setActivityPointsInput("");
     setDescriptionInput("");
     setSelectedActivityId("");
     setStep(STEP_CHOOSE_MODE);
@@ -166,6 +175,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
     stopScanner();
     resetTransientState();
     setPointsInput("");
+    setActivityPointsInput("");
     setDescriptionInput("");
 
     if (mode === MODE_ACTIVITY) {
@@ -177,11 +187,27 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
   }, [mode, resetTransientState, stopScanner]);
 
   const submitActivityAward = useCallback(
-    async (userId) => {
+    async (userId, manualPoints = null) => {
       const activityId = Number(selectedActivityId);
       if (!Number.isInteger(activityId)) {
         setFlowError("Select an activity before scanning a QR code.");
         return;
+      }
+
+      if (!selectedActivity) {
+        setFlowError("Select an activity before scanning a QR code.");
+        return;
+      }
+
+      const pointsMode = selectedActivity.pointsMode === "manual" ? "manual" : "automatic";
+      let requestBody = {};
+
+      if (pointsMode === "manual") {
+        if (!Number.isInteger(manualPoints) || manualPoints <= 0) {
+          setFlowError("Points must be an integer greater than zero.");
+          return;
+        }
+        requestBody = { points: manualPoints };
       }
 
       setFlowError(null);
@@ -191,6 +217,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
         const api = getApi();
         const response = await api.post(
           `/coffeebreak-point-system-plugin/point-system/points/${encodeURIComponent(userId)}/add-activity/${activityId}`,
+          requestBody,
         );
 
         const awardedPoints = Number(response?.data?.awarded_points ?? selectedActivity?.points ?? 0);
@@ -222,10 +249,17 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
       }
 
       if (mode === MODE_ACTIVITY) {
+        if (selectedActivity?.pointsMode === "manual") {
+          setActivityPointsInput("");
+          setFlowError(null);
+          setStep(STEP_ACTIVITY_MANUAL_AWARD);
+          return;
+        }
+
         await submitActivityAward(userId);
       }
     },
-    [mode, submitActivityAward],
+    [mode, selectedActivity, submitActivityAward],
   );
 
   const verifyQrPayload = useCallback(
@@ -482,6 +516,26 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
     [descriptionInput, pointsInput, scannedUserId],
   );
 
+  const handleActivityManualSubmit = useCallback(
+    async (event) => {
+      event.preventDefault();
+
+      if (!scannedUserId) {
+        setFlowError("Missing scanned user id.");
+        return;
+      }
+
+      const parsedPoints = Number(activityPointsInput);
+      if (!Number.isInteger(parsedPoints) || parsedPoints <= 0) {
+        setFlowError("Points must be an integer greater than zero.");
+        return;
+      }
+
+      await submitActivityAward(scannedUserId, parsedPoints);
+    },
+    [activityPointsInput, scannedUserId, submitActivityAward],
+  );
+
   const continueToActivityScan = useCallback(() => {
     if (!selectedActivity) {
       setFlowError("Select an activity before scanning.");
@@ -532,7 +586,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
                   <option value="">Choose an activity</option>
                   {activityOptions.map((activity) => (
                     <option key={activity.id} value={String(activity.id)}>
-                      {activity.name} - {activity.points} points
+                      {activity.name} - {activity.pointsMode === "manual" ? "manual points input" : `${activity.points} auto points`}
                     </option>
                   ))}
                 </select>
@@ -542,7 +596,9 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
             {selectedActivity && (
               <div className="alert alert-info text-sm">
                 <span>
-                  Selected {selectedActivity.name}. Participants will receive {selectedActivity.points} points automatically.
+                  {selectedActivity.pointsMode === "manual"
+                    ? `Selected ${selectedActivity.name}. After scanning, enter points manually and transaction will stay tied to this activity.`
+                    : `Selected ${selectedActivity.name}. Participants will receive ${selectedActivity.points} points automatically.`}
                 </span>
               </div>
             )}
@@ -587,7 +643,15 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
             {step === STEP_ACTIVITY_SCAN && selectedActivity && (
               <div className="alert alert-info text-sm">
                 <span>
-                  Activity: <span className="font-semibold">{selectedActivity.name}</span> - {selectedActivity.points} points
+                  {selectedActivity.pointsMode === "manual" ? (
+                    <>
+                      Activity: <span className="font-semibold">{selectedActivity.name}</span> - points entered after scan
+                    </>
+                  ) : (
+                    <>
+                      Activity: <span className="font-semibold">{selectedActivity.name}</span> - {selectedActivity.points} points
+                    </>
+                  )}
                 </span>
               </div>
             )}
@@ -709,6 +773,54 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
                   setStep(STEP_MANUAL_SCAN);
                   setPointsInput("");
                   setDescriptionInput("");
+                  setFlowError(null);
+                }}
+              >
+                Rescan participant
+              </button>
+              <button type="button" className="btn btn-outline" onClick={backToModeChooser}>
+                Change mode
+              </button>
+            </div>
+          </form>
+        )}
+
+        {step === STEP_ACTIVITY_MANUAL_AWARD && (
+          <form className="space-y-3" onSubmit={handleActivityManualSubmit}>
+            <div className="alert alert-info text-sm">
+              Participant identified: <span className="font-semibold">{scannedUserId}</span>
+            </div>
+
+            {selectedActivity && (
+              <div className="alert alert-info text-sm">
+                Activity: <span className="font-semibold">{selectedActivity.name}</span>
+              </div>
+            )}
+
+            <label className="form-control w-full">
+              <span className="label-text mb-1">Points to award for this activity</span>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                className="input input-bordered w-full"
+                value={activityPointsInput}
+                onChange={(event) => setActivityPointsInput(event.target.value)}
+                placeholder="e.g. 10"
+                required
+              />
+            </label>
+
+            <div className="flex flex-wrap gap-2">
+              <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
+                {isSubmitting ? "Submitting..." : "Award activity points"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => {
+                  setStep(STEP_ACTIVITY_SCAN);
+                  setActivityPointsInput("");
                   setFlowError(null);
                 }}
               >

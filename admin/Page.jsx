@@ -169,6 +169,7 @@ function ActivitySelectField({
 function TemplateForm({ initial, activities, onSubmit, onCancel }) {
   const [form, setForm] = useState({
     name: "",
+    points_mode: "automatic",
     points: 0,
     activity_id: "",
     description: "",
@@ -179,6 +180,7 @@ function TemplateForm({ initial, activities, onSubmit, onCancel }) {
     if (initial) {
       setForm({
         name: initial.name ?? "",
+        points_mode: initial.points_mode ?? "automatic",
         points: initial.points ?? 0,
         activity_id: initial.activity_id ? String(initial.activity_id) : "",
         description: initial.description ?? "",
@@ -189,6 +191,7 @@ function TemplateForm({ initial, activities, onSubmit, onCancel }) {
 
     setForm({
       name: "",
+      points_mode: "automatic",
       points: 0,
       activity_id: "",
       description: "",
@@ -204,7 +207,7 @@ function TemplateForm({ initial, activities, onSubmit, onCancel }) {
     event.preventDefault();
     onSubmit({
       ...form,
-      points: Number(form.points),
+      points: form.points_mode === "manual" ? 0 : Number(form.points),
       activity_id: form.activity_id ? Number(form.activity_id) : null,
       claim_limit: form.claim_limit ? Number(form.claim_limit) : 0,
     });
@@ -222,16 +225,16 @@ function TemplateForm({ initial, activities, onSubmit, onCancel }) {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="form-control">
           <label className="label">
-            <span className="label-text">Points</span>
+            <span className="label-text">Points Mode</span>
           </label>
-          <input
-            className="input input-bordered w-full"
-            type="number"
-            step="any"
-            value={form.points}
-            onChange={updateField("points")}
-            required
-          />
+          <select
+            className="select select-bordered w-full"
+            value={form.points_mode}
+            onChange={updateField("points_mode")}
+          >
+            <option value="automatic">Automatic (template points)</option>
+            <option value="manual">Manual (staff enters points)</option>
+          </select>
         </div>
 
         <div className="form-control">
@@ -245,6 +248,29 @@ function TemplateForm({ initial, activities, onSubmit, onCancel }) {
             placeholder="No activity"
             className="select select-bordered w-full"
           />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="form-control">
+          <label className="label">
+            <span className="label-text">Points</span>
+          </label>
+          <input
+            className="input input-bordered w-full"
+            type="number"
+            min="0"
+            step="1"
+            value={form.points}
+            onChange={updateField("points")}
+            required={form.points_mode === "automatic"}
+            disabled={form.points_mode === "manual"}
+          />
+          {form.points_mode === "manual" ? (
+            <span className="label-text-alt text-base-content/60 mt-1">
+              Points are entered by staff after scan.
+            </span>
+          ) : null}
         </div>
       </div>
 
@@ -424,6 +450,14 @@ function PrivilegedActions({ api, showNotification, templates, activities, users
       return;
     }
 
+    if (selectedTemplate?.points_mode === "manual") {
+      showNotification(
+        "This template requires manual points input and cannot be executed from this panel.",
+        "error"
+      );
+      return;
+    }
+
     setBusyAction("template");
     try {
       await api.post(`${TEMPLATES_URL}/${templateForm.template_id}/execute`, {
@@ -579,7 +613,14 @@ function PrivilegedActions({ api, showNotification, templates, activities, users
               {selectedTemplate ? (
                 <div className="space-y-1">
                   <div>
-                    <span className="text-base-content/60">Points:</span> {selectedTemplate.points}
+                    <span className="text-base-content/60">Mode:</span>{" "}
+                    {selectedTemplate.points_mode === "manual" ? "Manual" : "Automatic"}
+                  </div>
+                  <div>
+                    <span className="text-base-content/60">Points:</span>{" "}
+                    {selectedTemplate.points_mode === "manual"
+                      ? "Entered by staff at execution time"
+                      : selectedTemplate.points}
                   </div>
                   <div>
                     <span className="text-base-content/60">Activity:</span>{" "}
@@ -596,7 +637,10 @@ function PrivilegedActions({ api, showNotification, templates, activities, users
               )}
             </div>
 
-            <button className="btn btn-secondary btn-sm w-full" disabled={busyAction === "template"}>
+            <button
+              className="btn btn-secondary btn-sm w-full"
+              disabled={busyAction === "template" || selectedTemplate?.points_mode === "manual"}
+            >
               {busyAction === "template" ? "Executing..." : "Execute Template"}
             </button>
           </form>
@@ -895,6 +939,7 @@ function TemplatesSection({
               <tr>
                 <th>ID</th>
                 <th>Name</th>
+                <th>Mode</th>
                 <th>Points</th>
                 <th>Activity</th>
                 <th>Claim Limit</th>
@@ -907,7 +952,14 @@ function TemplatesSection({
                 <tr key={template.id}>
                   <td>{template.id}</td>
                   <td className="font-medium">{template.name}</td>
-                  <td>{template.points}</td>
+                  <td>
+                    <span className="badge badge-outline badge-sm">
+                      {template.points_mode === "manual" ? "manual" : "automatic"}
+                    </span>
+                  </td>
+                  <td>
+                    {template.points_mode === "manual" ? "Staff input" : template.points}
+                  </td>
                   <td>{template.activity_id ?? "-"}</td>
                   <td>{template.claim_limit === 0 ? "Unlimited" : template.claim_limit}</td>
                   <td>

@@ -8,6 +8,7 @@ from coffeebreak.dependencies.database import get_db  # type: ignore
 from sqlalchemy.orm import Session  # type: ignore
 
 from ..schemas.point_system import (
+    ActivityAwardRequest,
     SimpleUser,
     Transaction,
     TransactionRequest,
@@ -240,6 +241,7 @@ async def add_points(
 async def add_activity_points(
     user_id: str = Path(..., description="User identifier"),
     activity_id: int = Path(..., description="Activity identifier"),
+    payload: Optional[ActivityAwardRequest] = Body(None),
     db: Session = Depends(get_db),
 ):
     """
@@ -270,7 +272,31 @@ async def add_activity_points(
             )
 
         template = templates[0]
-        points = PointSystemService._round_points(template.points)
+        points_mode = str(
+            getattr(template, "points_mode", "automatic") or "automatic"
+        ).lower()
+
+        if points_mode not in {"automatic", "manual"}:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Template '{template.name}' has invalid points_mode '{points_mode}'. "
+                    "Use 'automatic' or 'manual'."
+                ),
+            )
+
+        if points_mode == "automatic":
+            points = PointSystemService._round_points(template.points)
+        else:
+            if payload is None or payload.points is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Template '{template.name}' requires manual points input. "
+                        "Provide points in request body."
+                    ),
+                )
+            points = payload.points
 
         if points <= 0:
             raise HTTPException(
@@ -303,6 +329,7 @@ async def add_activity_points(
                 "activity_id": activity_id,
                 "template_id": template.id,
                 "template_name": template.name,
+                "points_mode": points_mode,
                 "awarded_points": points,
                 "transaction": result,
             }
