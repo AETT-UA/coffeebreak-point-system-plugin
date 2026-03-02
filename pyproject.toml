@@ -1,0 +1,34 @@
+[project]
+name = "coffeebreak-point-system-plugin"
+version = "0.1.0"
+dependencies = [
+    "httpx>=0.25.0",
+]
+
+[tool.coffeebreak]
+identifier = "coffeebreak-point-system-plugin"
+name = "Point System Plugin"
+description = "The plugin allows for the usage of the point system"
+components_dir = "components"
+config_page = true
+
+[[tool.coffeebreak.components]]
+name = "StaffPage"
+file = "staff/StaffPage.jsx"
+
+[tool.coffeebreak.admin_page]
+file = "admin/Page.jsx"
+route_slug = "coffeebreak-point-system-plugin"
+export_name = "default"
+
+[[tool.coffeebreak.components]]
+name = "LeaderboardPage"
+file = "LeaderboardPage.jsx"
+
+[[tool.coffeebreak.components]]
+name = "TemplateQrClaimPage"
+file = "TemplateQrClaimPage.jsx"
+
+[[tool.coffeebreak.components]]
+name = "MyPointsPage"
+file = "MyPointsPage.jsx"
