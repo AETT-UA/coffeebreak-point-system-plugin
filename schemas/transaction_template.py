@@ -13,6 +13,10 @@ class PointsMode(str, Enum):
 class Base(BaseModel):
     name: str = Field(..., min_length=1, description="Template name")
     activity_id: Optional[int] = Field(None, description="Associated activity ID")
+    qr_enabled: bool = Field(
+        default=False,
+        description="Whether this template can be claimed by participants via QR scan",
+    )
     points: int = Field(
         0,
         description=(
@@ -42,6 +46,7 @@ class Base(BaseModel):
 class Update(BaseModel):
     name: Optional[str] = Field(None, min_length=1)
     activity_id: Optional[int] = Field(None)
+    qr_enabled: Optional[bool] = Field(None)
     points: Optional[int] = Field(None)
     points_mode: Optional[PointsMode] = Field(None)
     description: Optional[str] = Field(None)
@@ -97,3 +102,7 @@ class PermissionsResponse(BaseModel):
     template_id: int
     user_subs: List[str]
     role_names: List[str]
+
+
+class QrClaimRequest(BaseModel):
+    token: str = Field(..., min_length=1, description="Signed template QR token")

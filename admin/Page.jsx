@@ -169,6 +169,7 @@ function ActivitySelectField({
 function TemplateForm({ initial, activities, onSubmit, onCancel }) {
   const [form, setForm] = useState({
     name: "",
+    qr_enabled: false,
     points_mode: "automatic",
     points: 0,
     activity_id: "",
@@ -180,6 +181,7 @@ function TemplateForm({ initial, activities, onSubmit, onCancel }) {
     if (initial) {
       setForm({
         name: initial.name ?? "",
+        qr_enabled: Boolean(initial.qr_enabled),
         points_mode: initial.points_mode ?? "automatic",
         points: initial.points ?? 0,
         activity_id: initial.activity_id ? String(initial.activity_id) : "",
@@ -191,6 +193,7 @@ function TemplateForm({ initial, activities, onSubmit, onCancel }) {
 
     setForm({
       name: "",
+      qr_enabled: false,
       points_mode: "automatic",
       points: 0,
       activity_id: "",
@@ -200,13 +203,15 @@ function TemplateForm({ initial, activities, onSubmit, onCancel }) {
   }, [initial]);
 
   const updateField = (key) => (event) => {
-    setForm((prev) => ({ ...prev, [key]: event.target.value }));
+    const value = event.target.type === "checkbox" ? event.target.checked : event.target.value;
+    setForm((prev) => ({ ...prev, [key]: value }));
   };
 
   const handleSubmit = (event) => {
     event.preventDefault();
     onSubmit({
       ...form,
+      qr_enabled: Boolean(form.qr_enabled),
       points: form.points_mode === "manual" ? 0 : Number(form.points),
       activity_id: form.activity_id ? Number(form.activity_id) : null,
       claim_limit: form.claim_limit ? Number(form.claim_limit) : 0,
@@ -223,6 +228,18 @@ function TemplateForm({ initial, activities, onSubmit, onCancel }) {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="form-control">
+          <label className="label cursor-pointer justify-start gap-3">
+            <input
+              className="checkbox checkbox-sm"
+              type="checkbox"
+              checked={Boolean(form.qr_enabled)}
+              onChange={updateField("qr_enabled")}
+            />
+            <span className="label-text">Enable participant QR claiming</span>
+          </label>
+        </div>
+
         <div className="form-control">
           <label className="label">
             <span className="label-text">Points Mode</span>
@@ -767,6 +784,18 @@ function TemplatesSection({
   const [permissions, setPermissions] = useState({ user_subs: [], role_names: [] });
   const [newUserSub, setNewUserSub] = useState("");
   const [newRoleName, setNewRoleName] = useState("");
+  const [qrModalOpen, setQrModalOpen] = useState(false);
+  const [qrTemplate, setQrTemplate] = useState(null);
+  const [qrImageUrl, setQrImageUrl] = useState("");
+  const [qrLoading, setQrLoading] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (qrImageUrl) {
+        URL.revokeObjectURL(qrImageUrl);
+      }
+    };
+  }, [qrImageUrl]);
 
   const filteredTemplates = useMemo(
     () => templates.filter((template) => template.name.toLowerCase().includes(search.toLowerCase())),
@@ -837,6 +866,44 @@ function TemplatesSection({
       setPermissions({ user_subs: [], role_names: [] });
     } finally {
       setPermissionsLoading(false);
+    }
+  };
+
+  const closeQrModal = () => {
+    setQrModalOpen(false);
+    setQrTemplate(null);
+    if (qrImageUrl) {
+      URL.revokeObjectURL(qrImageUrl);
+    }
+    setQrImageUrl("");
+  };
+
+  const openQr = async (template) => {
+    if (!template.qr_enabled) {
+      showNotification("QR claiming is disabled for this template.", "error");
+      return;
+    }
+
+    setQrTemplate(template);
+    setQrModalOpen(true);
+    setQrLoading(true);
+
+    if (qrImageUrl) {
+      URL.revokeObjectURL(qrImageUrl);
+      setQrImageUrl("");
+    }
+
+    try {
+      const response = await api.get(`${TEMPLATES_URL}/${template.id}/qr`, {
+        responseType: "blob",
+      });
+      const imageUrl = URL.createObjectURL(response.data);
+      setQrImageUrl(imageUrl);
+    } catch (error) {
+      showNotification(error.response?.data?.detail || "Failed to generate template QR", "error");
+      setQrImageUrl("");
+    } finally {
+      setQrLoading(false);
     }
   };
 
@@ -940,6 +1007,7 @@ function TemplatesSection({
                 <th>ID</th>
                 <th>Name</th>
                 <th>Mode</th>
+                <th>QR</th>
                 <th>Points</th>
                 <th>Activity</th>
                 <th>Claim Limit</th>
@@ -958,6 +1026,11 @@ function TemplatesSection({
                     </span>
                   </td>
                   <td>
+                    <span className={`badge badge-sm ${template.qr_enabled ? "badge-success" : "badge-ghost"}`}>
+                      {template.qr_enabled ? "enabled" : "disabled"}
+                    </span>
+                  </td>
+                  <td>
                     {template.points_mode === "manual" ? "Staff input" : template.points}
                   </td>
                   <td>{template.activity_id ?? "-"}</td>
@@ -973,6 +1046,14 @@ function TemplatesSection({
                   </td>
                   <td>
                     <div className="flex items-center gap-1">
+                      <button
+                        className="btn btn-ghost btn-xs"
+                        title="Show template QR"
+                        onClick={() => openQr(template)}
+                        disabled={!template.qr_enabled}
+                      >
+                        QR
+                      </button>
                       <button className="btn btn-ghost btn-xs" title="Edit" onClick={() => openEdit(template)}>
                         <FiEdit2 />
                       </button>
@@ -1085,6 +1166,29 @@ function TemplatesSection({
               </div>
             </div>
           </div>
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={qrModalOpen}
+        onClose={closeQrModal}
+        title={qrTemplate ? `Template QR - ${qrTemplate.name}` : "Template QR"}
+      >
+        {qrLoading ? (
+          <div className="flex justify-center py-8">
+            <span className="loading loading-spinner loading-lg" />
+          </div>
+        ) : qrImageUrl ? (
+          <div className="space-y-3">
+            <p className="text-sm text-base-content/70">
+              Participants can scan this QR in the event app claim page.
+            </p>
+            <div className="flex justify-center rounded-xl border border-base-300 p-4 bg-base-200/40">
+              <img src={qrImageUrl} alt="Template QR" className="max-w-full h-auto rounded-md" />
+            </div>
+          </div>
+        ) : (
+          <div className="alert alert-error text-sm">Failed to load template QR.</div>
         )}
       </Modal>
     </Panel>

@@ -26,5 +26,9 @@ name = "LeaderboardPage"
 file = "LeaderboardPage.jsx"
 
 [[tool.coffeebreak.components]]
+name = "TemplateQrClaimPage"
+file = "TemplateQrClaimPage.jsx"
+
+[[tool.coffeebreak.components]]
 name = "MyPointsPage"
 file = "MyPointsPage.jsx"
