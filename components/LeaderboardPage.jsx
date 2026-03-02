@@ -40,6 +40,30 @@ function formatLastUpdated(dateValue) {
   }).format(dateValue);
 }
 
+function getRankBadgeClass(rank, isCurrentUser) {
+  if (isCurrentUser) return "badge-primary";
+  if (rank === 1) return "badge-warning text-warning-content";
+  if (rank === 2) return "badge-neutral";
+  if (rank === 3) return "badge-accent";
+  return "badge-ghost";
+}
+
+function getRowClass(rank, isCurrentUser) {
+  if (isCurrentUser) return "bg-primary/10 font-semibold";
+  if (rank === 1) return "bg-warning/5";
+  if (rank === 2) return "bg-neutral/5";
+  if (rank === 3) return "bg-accent/5";
+  return "";
+}
+
+function getMobileCardClass(rank, isCurrentUser) {
+  if (isCurrentUser) return "border-primary bg-primary/10";
+  if (rank === 1) return "border-warning bg-warning/5";
+  if (rank === 2) return "border-neutral bg-neutral/5";
+  if (rank === 3) return "border-accent bg-accent/5";
+  return "border-base-300 bg-base-100";
+}
+
 export default function LeaderboardPage({
   title = "Event Leaderboard",
   activity_id = null,
@@ -246,11 +270,11 @@ export default function LeaderboardPage({
                     return (
                       <tr 
                         key={`${entry.user_id}-${entry.rank}`}
-                        className={isCurrentUser ? "bg-primary/10 font-semibold" : ""}
+                        className={getRowClass(entry.rank, isCurrentUser)}
                       >
                         {show_rank && (
                           <td>
-                            <span className={`badge ${isCurrentUser ? "badge-primary" : "badge-ghost"}`}>
+                            <span className={`badge ${getRankBadgeClass(entry.rank, isCurrentUser)}`}>
                               #{entry.rank}
                             </span>
                           </td>
@@ -258,7 +282,7 @@ export default function LeaderboardPage({
                         <td>
                           <div className="flex items-center gap-2">
                             <div>
-                              <div className="font-medium">
+                              <div className={`font-medium ${entry.rank <= 3 ? "text-lg" : ""}`}>
                                 {entry.user_name}
                                 {isCurrentUser && <span className="ml-2 text-xs text-primary">(You)</span>}
                               </div>
@@ -268,7 +292,7 @@ export default function LeaderboardPage({
                             </div>
                           </div>
                         </td>
-                        <td className="text-right font-semibold">{entry.points}</td>
+                        <td className={`text-right font-semibold ${entry.rank <= 3 ? "text-lg" : ""}`}>{entry.points}</td>
                       </tr>
                     );
                   })}
@@ -282,15 +306,11 @@ export default function LeaderboardPage({
                 return (
                   <div
                     key={`${entry.user_id}-${entry.rank}`}
-                    className={`rounded-lg border p-3 ${
-                      isCurrentUser 
-                        ? "border-primary bg-primary/10" 
-                        : "border-base-300 bg-base-100"
-                    }`}
+                    className={`rounded-lg border p-3 ${getMobileCardClass(entry.rank, isCurrentUser)}`}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div>
-                        <div className="font-medium break-all">
+                        <div className={`font-medium break-all ${entry.rank <= 3 ? "text-lg" : ""}`}>
                           {entry.user_name}
                           {isCurrentUser && <span className="ml-2 text-xs text-primary">(You)</span>}
                         </div>
@@ -299,13 +319,13 @@ export default function LeaderboardPage({
                         )}
                       </div>
                       {show_rank && (
-                        <span className={`badge ${isCurrentUser ? "badge-primary" : "badge-ghost"}`}>
+                        <span className={`badge ${getRankBadgeClass(entry.rank, isCurrentUser)}`}>
                           #{entry.rank}
                         </span>
                       )}
                     </div>
                     <div className="mt-1 text-sm text-base-content/70">
-                      Points: <span className="font-semibold text-base-content">{entry.points}</span>
+                      Points: <span className={`font-semibold text-base-content ${entry.rank <= 3 ? "text-base" : ""}`}>{entry.points}</span>
                     </div>
                   </div>
                 );
