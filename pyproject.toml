@@ -8,3 +8,8 @@ config_page = true
 [[tool.coffeebreak.components]]
 name = "StaffPage"
 file = "StaffPage.jsx"
+
+[tool.coffeebreak.admin_page]
+file = "admin/Page.jsx"
+route_slug = "coffeebreak-point-system-plugin"
+export_name = "default"
