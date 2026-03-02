@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { getApi, useActivity } from "coffeebreak/event-app";
+import jsQR from "jsqr";
 
 import ActivityManualAwardForm from "./ActivityManualAwardForm.jsx";
 import ActivitySelectionStep from "./ActivitySelectionStep.jsx";
@@ -23,6 +24,34 @@ import ModeSelector from "./ModeSelector.jsx";
 import ScannerStep from "./ScannerStep.jsx";
 import SuccessStep from "./SuccessStep.jsx";
 import { getErrorMessage } from "./utils.js";
+
+const CAMERA_CONSTRAINTS = [
+  { video: { facingMode: { ideal: "environment" } }, audio: false },
+  { video: { facingMode: "environment" }, audio: false },
+  { video: true, audio: false },
+];
+
+function getCameraErrorMessage(error) {
+  const errorName = error?.name;
+
+  if (errorName === "NotAllowedError" || errorName === "SecurityError") {
+    return "Camera permission denied. Allow camera access in Safari settings and use HTTPS.";
+  }
+
+  if (errorName === "NotFoundError" || errorName === "DevicesNotFoundError") {
+    return "No camera device found.";
+  }
+
+  if (errorName === "NotReadableError" || errorName === "TrackStartError") {
+    return "Camera is already in use by another app.";
+  }
+
+  if (errorName === "OverconstrainedError") {
+    return "Selected camera is not available. Try another camera.";
+  }
+
+  return getErrorMessage(error, "Could not start camera. Check browser permissions and HTTPS.");
+}
 
 export default function StaffPage({ title = "Staff QR Scanner" }) {
   const { activities = [], loading: activitiesLoading, error: activitiesError } = useActivity();
@@ -50,6 +79,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
   const [templatesError, setTemplatesError] = useState(null);
 
   const videoRef = useRef(null);
+  const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const detectorRef = useRef(null);
   const scanIntervalRef = useRef(null);
@@ -59,6 +89,81 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
 
   const isBrowser = typeof window !== "undefined";
   const supportsBarcodeDetector = isBrowser && "BarcodeDetector" in window;
+  const supportsJsQr = typeof jsQR === "function";
+  const supportsLiveScanning = supportsBarcodeDetector || supportsJsQr;
+
+  const requestCameraStream = useCallback(async () => {
+    let lastError = null;
+
+    for (const constraints of CAMERA_CONSTRAINTS) {
+      try {
+        return await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (error) {
+        lastError = error;
+        const errorName = error?.name;
+
+        if (errorName === "NotAllowedError" || errorName === "SecurityError") {
+          break;
+        }
+      }
+    }
+
+    throw lastError || new Error("Could not access camera.");
+  }, []);
+
+  const detectQrToken = useCallback(async () => {
+    const videoElement = videoRef.current;
+    if (!videoElement || videoElement.readyState < 2) {
+      return null;
+    }
+
+    if (detectorRef.current) {
+      const detections = await detectorRef.current.detect(videoElement);
+      if (!Array.isArray(detections) || detections.length === 0) {
+        return null;
+      }
+
+      const firstQr = detections.find(
+        (item) => typeof item?.rawValue === "string" && item.rawValue.trim()
+      );
+      return firstQr?.rawValue?.trim() || null;
+    }
+
+    if (!supportsJsQr) {
+      return null;
+    }
+
+    const frameWidth = videoElement.videoWidth;
+    const frameHeight = videoElement.videoHeight;
+    if (!frameWidth || !frameHeight) {
+      return null;
+    }
+
+    if (!canvasRef.current) {
+      canvasRef.current = document.createElement("canvas");
+    }
+
+    const canvas = canvasRef.current;
+    if (canvas.width !== frameWidth || canvas.height !== frameHeight) {
+      canvas.width = frameWidth;
+      canvas.height = frameHeight;
+    }
+
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      return null;
+    }
+
+    context.drawImage(videoElement, 0, 0, frameWidth, frameHeight);
+    const imageData = context.getImageData(0, 0, frameWidth, frameHeight);
+    const qrResult = jsQR(imageData.data, frameWidth, frameHeight, {
+      inversionAttempts: "attemptBoth",
+    });
+
+    return typeof qrResult?.data === "string" && qrResult.data.trim()
+      ? qrResult.data.trim()
+      : null;
+  }, [supportsJsQr]);
 
   const activityOptions = useMemo(() => {
     const options = [];
@@ -127,6 +232,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
     }
 
     detectorRef.current = null;
+    canvasRef.current = null;
     scanInProgressRef.current = false;
     setIsScannerActive(false);
   }, []);
@@ -292,7 +398,6 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
 
   const scanFrame = useCallback(async () => {
     if (
-      !detectorRef.current ||
       !videoRef.current ||
       scanInProgressRef.current ||
       verifyInProgressRef.current
@@ -308,19 +413,11 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
     scanInProgressRef.current = true;
 
     try {
-      const detections = await detectorRef.current.detect(videoElement);
-      if (!Array.isArray(detections) || detections.length === 0) {
+      const rawValue = await detectQrToken();
+      if (!rawValue) {
         return;
       }
 
-      const firstQr = detections.find(
-        (item) => typeof item?.rawValue === "string" && item.rawValue.trim()
-      );
-      if (!firstQr) {
-        return;
-      }
-
-      const rawValue = firstQr.rawValue.trim();
       const now = Date.now();
 
       if (
@@ -337,7 +434,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
     } finally {
       scanInProgressRef.current = false;
     }
-  }, [verifyQrPayload]);
+  }, [detectQrToken, verifyQrPayload]);
 
   const startScanner = useCallback(async () => {
     const isScanStep = step === STEP_MANUAL_SCAN || step === STEP_ACTIVITY_SCAN;
@@ -357,7 +454,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
     setScannerError(null);
     setFlowError(null);
 
-    if (!supportsBarcodeDetector) {
+    if (!supportsLiveScanning) {
       setScannerError("This browser does not support live QR scanning.");
       return;
     }
@@ -368,12 +465,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: "environment" },
-        },
-        audio: false,
-      });
+      const stream = await requestCameraStream();
 
       streamRef.current = stream;
 
@@ -384,9 +476,18 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
       }
 
       videoRef.current.srcObject = stream;
+      videoRef.current.setAttribute("playsinline", "true");
       await videoRef.current.play();
 
-      detectorRef.current = new window.BarcodeDetector({ formats: ["qr_code"] });
+      if (supportsBarcodeDetector) {
+        try {
+          detectorRef.current = new window.BarcodeDetector({ formats: ["qr_code"] });
+        } catch {
+          detectorRef.current = null;
+        }
+      } else {
+        detectorRef.current = null;
+      }
 
       scanIntervalRef.current = window.setInterval(() => {
         void scanFrame();
@@ -395,9 +496,18 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
       setIsScannerActive(true);
     } catch (error) {
       stopScanner();
-      setScannerError(getErrorMessage(error, "Could not start camera. Check browser permissions."));
+      setScannerError(getCameraErrorMessage(error));
     }
-  }, [mode, scanFrame, selectedActivity, step, stopScanner, supportsBarcodeDetector]);
+  }, [
+    mode,
+    requestCameraStream,
+    scanFrame,
+    selectedActivity,
+    step,
+    stopScanner,
+    supportsBarcodeDetector,
+    supportsLiveScanning,
+  ]);
 
   useEffect(() => {
     const isScanStep = step === STEP_MANUAL_SCAN || step === STEP_ACTIVITY_SCAN;
@@ -596,7 +706,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
             isScannerActive={isScannerActive}
             isVerifying={isVerifying}
             isSubmitting={isSubmitting}
-            supportsBarcodeDetector={supportsBarcodeDetector}
+            supportsLiveScanning={supportsLiveScanning}
             videoRef={videoRef}
             onStopScanner={stopScanner}
             onBack={handleScanBack}

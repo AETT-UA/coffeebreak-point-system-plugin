@@ -16,6 +16,10 @@ const POINT_SYSTEM_URL = `${baseUrl}/${PLUGIN}/point-system`;
 const USERS_URL = `${baseUrl}/users/`;
 const ROLES_URL = `${baseUrl}/users/roles/`;
 const ACTIVITIES_URL = `${baseUrl}/activities/`;
+const TRANSACTION_PAGE_SIZE_OPTIONS = [10, 25, 50];
+const DEFAULT_TRANSACTION_PAGE_SIZE = 25;
+const LEADERBOARD_PAGE_SIZE_OPTIONS = [10, 25, 50];
+const DEFAULT_LEADERBOARD_PAGE_SIZE = 25;
 
 function toNumber(value) {
   if (value === "" || value === null || value === undefined) {
@@ -667,7 +671,17 @@ function PrivilegedActions({ api, showNotification, templates, activities, users
   );
 }
 
-function TransactionLogsPanel({ transactions, loading, onRefresh }) {
+function TransactionLogsPanel({
+  transactions,
+  loading,
+  onRefresh,
+  page,
+  pageSize,
+  hasNextPage,
+  onPreviousPage,
+  onNextPage,
+  onPageSizeChange,
+}) {
   return (
     <Panel
       title="Transaction Log"
@@ -678,6 +692,46 @@ function TransactionLogsPanel({ transactions, loading, onRefresh }) {
         </button>
       }
     >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-base-content/70 sm:text-sm">Rows per page</span>
+          <select
+            className="select select-bordered select-xs sm:select-sm"
+            value={String(pageSize)}
+            onChange={(event) => onPageSizeChange(Number(event.target.value))}
+            disabled={loading}
+          >
+            {TRANSACTION_PAGE_SIZE_OPTIONS.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="join">
+          <button
+            type="button"
+            className="btn btn-ghost btn-xs join-item sm:btn-sm"
+            onClick={onPreviousPage}
+            disabled={loading || page === 0}
+          >
+            Previous
+          </button>
+          <button type="button" className="btn btn-ghost btn-xs join-item pointer-events-none sm:btn-sm">
+            Page {page + 1}
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-xs join-item sm:btn-sm"
+            onClick={onNextPage}
+            disabled={loading || !hasNextPage}
+          >
+            Next
+          </button>
+        </div>
+      </div>
+
       {loading ? (
         <div className="flex justify-center py-10">
           <span className="loading loading-spinner loading-lg" />
@@ -685,9 +739,9 @@ function TransactionLogsPanel({ transactions, loading, onRefresh }) {
       ) : transactions.length === 0 ? (
         <p className="text-sm text-base-content/70">No transactions found for the selected filters.</p>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="max-h-[30rem] overflow-x-auto overflow-y-auto rounded-xl border border-base-300">
           <table className="table table-zebra table-sm">
-            <thead>
+            <thead className="sticky top-0 z-10 bg-base-100">
               <tr>
                 <th>ID</th>
                 <th>User</th>
@@ -720,7 +774,20 @@ function TransactionLogsPanel({ transactions, loading, onRefresh }) {
   );
 }
 
-function LeaderboardPanel({ entries, loading, onRefresh }) {
+function LeaderboardPanel({
+  entries,
+  loading,
+  onRefresh,
+  page,
+  pageSize,
+  totalEntries,
+  totalPages,
+  hasNextPage,
+  rankOffset,
+  onPreviousPage,
+  onNextPage,
+  onPageSizeChange,
+}) {
   return (
     <Panel
       title="Leaderboard"
@@ -731,16 +798,60 @@ function LeaderboardPanel({ entries, loading, onRefresh }) {
         </button>
       }
     >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-base-content/70 sm:text-sm">Rows per page</span>
+          <select
+            className="select select-bordered select-xs sm:select-sm"
+            value={String(pageSize)}
+            onChange={(event) => onPageSizeChange(Number(event.target.value))}
+            disabled={loading}
+          >
+            {LEADERBOARD_PAGE_SIZE_OPTIONS.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="join">
+          <button
+            type="button"
+            className="btn btn-ghost btn-xs join-item sm:btn-sm"
+            onClick={onPreviousPage}
+            disabled={loading || page === 0}
+          >
+            Previous
+          </button>
+          <button type="button" className="btn btn-ghost btn-xs join-item pointer-events-none sm:btn-sm">
+            Page {page + 1} of {totalPages}
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-xs join-item sm:btn-sm"
+            onClick={onNextPage}
+            disabled={loading || !hasNextPage}
+          >
+            Next
+          </button>
+        </div>
+      </div>
+
       {loading ? (
         <div className="flex justify-center py-10">
           <span className="loading loading-spinner loading-lg" />
         </div>
-      ) : entries.length === 0 ? (
+      ) : totalEntries === 0 ? (
         <p className="text-sm text-base-content/70">No leaderboard entries for the selected filters.</p>
       ) : (
-        <div className="overflow-x-auto">
+        <>
+          <p className="text-xs text-base-content/60">
+            Showing {rankOffset + 1}-{rankOffset + entries.length} of {totalEntries}
+          </p>
+          <div className="max-h-[30rem] overflow-x-auto overflow-y-auto rounded-xl border border-base-300">
           <table className="table table-sm">
-            <thead>
+            <thead className="sticky top-0 z-10 bg-base-100">
               <tr>
                 <th>#</th>
                 <th>User</th>
@@ -749,15 +860,16 @@ function LeaderboardPanel({ entries, loading, onRefresh }) {
             </thead>
             <tbody>
               {entries.map((entry, index) => (
-                <tr key={entry.id} className={index < 3 ? "font-semibold" : ""}>
-                  <td>{index + 1}</td>
+                <tr key={entry.id} className={rankOffset + index < 3 ? "font-semibold" : ""}>
+                  <td>{rankOffset + index + 1}</td>
                   <td>{entry.id}</td>
                   <td>{entry.points}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
     </Panel>
   );
@@ -1232,6 +1344,11 @@ export default function PointSystemAdminPage() {
   const [activityFilter, setActivityFilter] = useState("");
   const [userFilter, setUserFilter] = useState("");
   const [transactionTypeFilter, setTransactionTypeFilter] = useState("");
+  const [transactionPage, setTransactionPage] = useState(0);
+  const [transactionPageSize, setTransactionPageSize] = useState(DEFAULT_TRANSACTION_PAGE_SIZE);
+  const [hasNextTransactionPage, setHasNextTransactionPage] = useState(false);
+  const [leaderboardPage, setLeaderboardPage] = useState(0);
+  const [leaderboardPageSize, setLeaderboardPageSize] = useState(DEFAULT_LEADERBOARD_PAGE_SIZE);
 
   const userOptions = useMemo(() => {
     const mapped = new Map();
@@ -1307,6 +1424,17 @@ export default function PointSystemAdminPage() {
     return leaderboardEntries.filter((entry) => String(entry.id) === userFilter.trim());
   }, [leaderboardEntries, userFilter]);
 
+  const leaderboardTotalEntries = filteredLeaderboardEntries.length;
+  const leaderboardTotalPages = Math.max(1, Math.ceil(leaderboardTotalEntries / leaderboardPageSize));
+  const safeLeaderboardPage = Math.min(leaderboardPage, leaderboardTotalPages - 1);
+  const leaderboardRankOffset = safeLeaderboardPage * leaderboardPageSize;
+  const paginatedLeaderboardEntries = useMemo(() => {
+    const start = safeLeaderboardPage * leaderboardPageSize;
+    const end = start + leaderboardPageSize;
+    return filteredLeaderboardEntries.slice(start, end);
+  }, [filteredLeaderboardEntries, safeLeaderboardPage, leaderboardPageSize]);
+  const hasNextLeaderboardPage = safeLeaderboardPage + 1 < leaderboardTotalPages;
+
   const totalPositiveTransactions = useMemo(
     () => transactions.filter((transaction) => transaction.points > 0).length,
     [transactions]
@@ -1365,10 +1493,24 @@ export default function PointSystemAdminPage() {
     }
   };
 
-  const fetchTransactions = async (nextActivityFilter, nextTypeFilter, nextUserFilter) => {
+  const fetchTransactions = async (
+    nextActivityFilter,
+    nextTypeFilter,
+    nextUserFilter,
+    nextPage = transactionPage,
+    nextPageSize = transactionPageSize
+  ) => {
     setTransactionsLoading(true);
     try {
-      const params = new URLSearchParams({ limit: "50" });
+      const safePage = Number.isInteger(nextPage) && nextPage >= 0 ? nextPage : 0;
+      const safePageSize = TRANSACTION_PAGE_SIZE_OPTIONS.includes(nextPageSize)
+        ? nextPageSize
+        : DEFAULT_TRANSACTION_PAGE_SIZE;
+
+      const params = new URLSearchParams({
+        skip: String(safePage * safePageSize),
+        limit: String(Math.min(100, safePageSize + 1)),
+      });
       if (nextActivityFilter) {
         params.set("activity_id", nextActivityFilter);
       }
@@ -1380,8 +1522,11 @@ export default function PointSystemAdminPage() {
       }
 
       const { data } = await api.get(`${POINT_SYSTEM_URL}/transactions?${params.toString()}`);
-      setTransactions(data);
+      const rows = Array.isArray(data) ? data : [];
+      setHasNextTransactionPage(rows.length > safePageSize);
+      setTransactions(rows.slice(0, safePageSize));
     } catch (error) {
+      setHasNextTransactionPage(false);
       showNotification(error.response?.data?.detail || "Failed to load transaction log", "error");
     } finally {
       setTransactionsLoading(false);
@@ -1406,25 +1551,80 @@ export default function PointSystemAdminPage() {
   const refreshAnalytics = async (
     nextActivityFilter = activityFilter,
     nextTypeFilter = transactionTypeFilter,
-    nextUserFilter = userFilter
+    nextUserFilter = userFilter,
+    nextTransactionPage = transactionPage,
+    nextTransactionPageSize = transactionPageSize
   ) => {
     setSyncing(true);
     await Promise.all([
-      fetchTransactions(nextActivityFilter, nextTypeFilter, nextUserFilter),
+      fetchTransactions(
+        nextActivityFilter,
+        nextTypeFilter,
+        nextUserFilter,
+        nextTransactionPage,
+        nextTransactionPageSize
+      ),
       fetchLeaderboard(nextActivityFilter),
     ]);
     setSyncing(false);
   };
 
   const resetFilters = async () => {
-    const alreadyClear = activityFilter === "" && transactionTypeFilter === "" && userFilter === "";
+    const alreadyClear =
+      activityFilter === "" &&
+      transactionTypeFilter === "" &&
+      userFilter === "" &&
+      transactionPage === 0 &&
+      leaderboardPage === 0;
     setActivityFilter("");
     setTransactionTypeFilter("");
     setUserFilter("");
+    setTransactionPage(0);
+    setLeaderboardPage(0);
     if (alreadyClear) {
-      await refreshAnalytics("", "", "");
+      await refreshAnalytics("", "", "", 0, transactionPageSize);
     }
   };
+
+  const handleUserFilterChange = (event) => {
+    setUserFilter(event.target.value);
+    setTransactionPage(0);
+    setLeaderboardPage(0);
+  };
+
+  const handleActivityFilterChange = (event) => {
+    setActivityFilter(event.target.value);
+    setTransactionPage(0);
+    setLeaderboardPage(0);
+  };
+
+  const handleTransactionTypeFilterChange = (event) => {
+    setTransactionTypeFilter(event.target.value);
+    setTransactionPage(0);
+  };
+
+  const handleTransactionPageSizeChange = (nextPageSize) => {
+    const parsed = Number(nextPageSize);
+    if (!TRANSACTION_PAGE_SIZE_OPTIONS.includes(parsed)) {
+      return;
+    }
+    setTransactionPageSize(parsed);
+    setTransactionPage(0);
+  };
+
+  const handleLeaderboardPageSizeChange = (nextPageSize) => {
+    const parsed = Number(nextPageSize);
+    if (!LEADERBOARD_PAGE_SIZE_OPTIONS.includes(parsed)) {
+      return;
+    }
+    setLeaderboardPageSize(parsed);
+    setLeaderboardPage(0);
+  };
+
+  useEffect(() => {
+    const maxPage = Math.max(0, leaderboardTotalPages - 1);
+    setLeaderboardPage((current) => (current > maxPage ? maxPage : current));
+  }, [leaderboardTotalPages]);
 
   useEffect(() => {
     fetchHealth();
@@ -1436,11 +1636,11 @@ export default function PointSystemAdminPage() {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      refreshAnalytics(activityFilter, transactionTypeFilter, userFilter);
+      refreshAnalytics(activityFilter, transactionTypeFilter, userFilter, transactionPage, transactionPageSize);
     }, 250);
 
     return () => clearTimeout(timer);
-  }, [activityFilter, transactionTypeFilter, userFilter]);
+  }, [activityFilter, transactionTypeFilter, userFilter, transactionPage, transactionPageSize]);
 
   return (
     <div className="w-full min-h-screen p-4 sm:p-6 lg:p-8">
@@ -1499,7 +1699,7 @@ export default function PointSystemAdminPage() {
             <UserSelectField
               users={userOptions}
               value={userFilter}
-              onChange={(event) => setUserFilter(event.target.value)}
+              onChange={handleUserFilterChange}
               placeholder="All users"
               allowEmpty
             />
@@ -1507,7 +1707,7 @@ export default function PointSystemAdminPage() {
             <ActivitySelectField
               activities={activities}
               value={activityFilter}
-              onChange={(event) => setActivityFilter(event.target.value)}
+              onChange={handleActivityFilterChange}
               placeholder="Activity"
               allowEmpty
             />
@@ -1515,7 +1715,7 @@ export default function PointSystemAdminPage() {
             <select
               className="select select-bordered select-sm"
               value={transactionTypeFilter}
-              onChange={(event) => setTransactionTypeFilter(event.target.value)}
+              onChange={handleTransactionTypeFilterChange}
             >
               <option value="">All transaction types</option>
               <option value="manual">Manual</option>
@@ -1529,13 +1729,40 @@ export default function PointSystemAdminPage() {
             <TransactionLogsPanel
               transactions={transactions}
               loading={transactionsLoading}
-              onRefresh={() => fetchTransactions(activityFilter, transactionTypeFilter, userFilter)}
+              onRefresh={() =>
+                fetchTransactions(
+                  activityFilter,
+                  transactionTypeFilter,
+                  userFilter,
+                  transactionPage,
+                  transactionPageSize
+                )
+              }
+              page={transactionPage}
+              pageSize={transactionPageSize}
+              hasNextPage={hasNextTransactionPage}
+              onPreviousPage={() => setTransactionPage((current) => Math.max(0, current - 1))}
+              onNextPage={() =>
+                setTransactionPage((current) => (hasNextTransactionPage ? current + 1 : current))
+              }
+              onPageSizeChange={handleTransactionPageSizeChange}
             />
 
             <LeaderboardPanel
-              entries={filteredLeaderboardEntries}
+              entries={paginatedLeaderboardEntries}
               loading={leaderboardLoading}
               onRefresh={() => fetchLeaderboard(activityFilter)}
+              page={safeLeaderboardPage}
+              pageSize={leaderboardPageSize}
+              totalEntries={leaderboardTotalEntries}
+              totalPages={leaderboardTotalPages}
+              hasNextPage={hasNextLeaderboardPage}
+              rankOffset={leaderboardRankOffset}
+              onPreviousPage={() => setLeaderboardPage((current) => Math.max(0, current - 1))}
+              onNextPage={() =>
+                setLeaderboardPage((current) => (hasNextLeaderboardPage ? current + 1 : current))
+              }
+              onPageSizeChange={handleLeaderboardPageSizeChange}
             />
           </div>
         </Panel>
