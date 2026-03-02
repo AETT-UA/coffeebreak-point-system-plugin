@@ -51,6 +51,8 @@ export default function MyPointsPage({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [currentUserId, setCurrentUserId] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalTransactions, setTotalTransactions] = useState(0);
 
   useEffect(() => {
     setCurrentUserId(getCurrentUserId());
@@ -84,18 +86,33 @@ export default function MyPointsPage({
         // Fetch transactions if enabled
         if (show_transactions) {
           try {
+            const offset = (currentPage - 1) * transaction_limit;
             const transactionsResponse = await api.get(
               `/coffeebreak-point-system-plugin/point-system/points/${encodeURIComponent(currentUserId)}/history`,
               {
                 params: {
                   limit: transaction_limit,
+                  offset: offset,
                 },
               }
             );
-            setTransactions(Array.isArray(transactionsResponse.data) ? transactionsResponse.data : []);
+            
+            // Handle both array response and paginated response
+            if (Array.isArray(transactionsResponse.data)) {
+              setTransactions(transactionsResponse.data);
+              setTotalTransactions(transactionsResponse.data.length);
+            } else if (transactionsResponse.data?.items) {
+              // Paginated response with items and total
+              setTransactions(transactionsResponse.data.items);
+              setTotalTransactions(transactionsResponse.data.total || transactionsResponse.data.items.length);
+            } else {
+              setTransactions([]);
+              setTotalTransactions(0);
+            }
           } catch (txError) {
             console.warn("Failed to load transactions:", txError);
             setTransactions([]);
+            setTotalTransactions(0);
           }
         }
 
@@ -125,14 +142,20 @@ export default function MyPointsPage({
         }
       }
     },
-    [currentUserId, show_transactions, transaction_limit]
+    [currentUserId, show_transactions, transaction_limit, currentPage]
   );
 
   useEffect(() => {
     if (currentUserId) {
+      setCurrentPage(1); // Reset to first page when user changes
       void loadUserData();
     }
   }, [currentUserId, loadUserData]);
+
+  // Reset to first page when transaction limit changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [transaction_limit]);
 
   if (!currentUserId) {
     return (
@@ -264,6 +287,34 @@ export default function MyPointsPage({
                     </tbody>
                   </table>
                 </div>
+                
+                {/* Pagination Controls */}
+                {totalTransactions > transaction_limit && (
+                  <div className="flex items-center justify-between gap-4 mt-4">
+                    <div className="text-sm text-base-content/70">
+                      Showing {Math.min((currentPage - 1) * transaction_limit + 1, totalTransactions)} to {Math.min(currentPage * transaction_limit, totalTransactions)} of {totalTransactions} transactions
+                    </div>
+                    <div className="join">
+                      <button
+                        className="join-item btn btn-sm"
+                        onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                        disabled={currentPage === 1}
+                      >
+                        «
+                      </button>
+                      <button className="join-item btn btn-sm">
+                        Page {currentPage} of {Math.ceil(totalTransactions / transaction_limit)}
+                      </button>
+                      <button
+                        className="join-item btn btn-sm"
+                        onClick={() => setCurrentPage(prev => Math.min(Math.ceil(totalTransactions / transaction_limit), prev + 1))}
+                        disabled={currentPage >= Math.ceil(totalTransactions / transaction_limit)}
+                      >
+                        »
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
