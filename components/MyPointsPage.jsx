@@ -226,38 +226,41 @@ export default function MyPointsPage({
                       </tr>
                     </thead>
                     <tbody>
-                      {transactions.map((tx) => (
-                        <tr key={tx.id}>
-                          <td className="text-sm">{formatDate(tx.created_at)}</td>
-                          <td>
-                            <span className={`badge badge-sm ${
-                              tx.transaction_type === "credit" 
-                                ? "badge-success" 
-                                : "badge-error"
-                            }`}>
-                              {tx.transaction_type}
-                            </span>
-                          </td>
-                          <td className="text-sm">{tx.description || "-"}</td>
-                          <td className="text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              {tx.transaction_type === "credit" ? (
-                                <HiTrendingUp className="text-success" />
-                              ) : (
-                                <HiTrendingDown className="text-error" />
-                              )}
-                              <span className={`font-semibold ${
-                                tx.transaction_type === "credit" 
-                                  ? "text-success" 
-                                  : "text-error"
+                      {transactions.map((tx) => {
+                        const isCredit = tx.points > 0;
+                        return (
+                          <tr key={tx.id}>
+                            <td className="text-sm">{formatDate(tx.created_at)}</td>
+                            <td>
+                              <span className={`badge badge-sm ${
+                                isCredit 
+                                  ? "badge-success" 
+                                  : "badge-error"
                               }`}>
-                                {tx.transaction_type === "credit" ? "+" : "-"}
-                                {Math.abs(tx.points)}
+                                {tx.transaction_type}
                               </span>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                            </td>
+                            <td className="text-sm">{tx.description || "-"}</td>
+                            <td className="text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                {isCredit ? (
+                                  <HiTrendingUp className="text-success" />
+                                ) : (
+                                  <HiTrendingDown className="text-error" />
+                                )}
+                                <span className={`font-semibold ${
+                                  isCredit 
+                                    ? "text-success" 
+                                    : "text-error"
+                                }`}>
+                                  {isCredit ? "+" : ""}
+                                  {tx.points}
+                                </span>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
