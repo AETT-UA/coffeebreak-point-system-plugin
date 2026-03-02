@@ -1,22 +1,22 @@
-from sqlalchemy import Column, Double, Integer, Text, DateTime, String # type: ignore
-from sqlalchemy.sql import func                                        # type: ignore
-from coffeebreak.dependencies.database import Base                                 # type: ignore
+from sqlalchemy import Column, Double, Integer, Text, DateTime, String
+from sqlalchemy.sql import func
+from coffeebreak.dependencies.database import Base
+
 
 class TransactionTemplate(Base):
-    """
-    SQLAlchemy model for transaction templates
-    Stores the information about a transaction template
-    """
     __tablename__ = "transaction_templates"
 
-    # template fields
-    id               = Column(Integer, primary_key=True, index=True)
-    name             = Column(String, unique=True, nullable=False)
-    created_at       = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at       = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    original_name = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
 
-    # transaction fields
-    activity_id      = Column(Integer,  nullable=True)
-    points           = Column(Double,   nullable=False)
-    description      = Column(Text,     nullable=True)
-    claim_limit      = Column(Integer,  nullable=True, default=0)
+    activity_id = Column(Integer, nullable=True)
+    points_mode = Column(String, nullable=False, server_default="automatic")
+    points = Column(Double, nullable=False)
+    description = Column(Text, nullable=True)
+    claim_limit = Column(Integer, nullable=True, default=0)

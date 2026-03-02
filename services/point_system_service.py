@@ -1,10 +1,13 @@
-from typing import Dict, List, Optional, Tuple  # type: ignore
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Tuple
 import asyncio
 import logging
 import httpx
 from urllib.parse import urljoin
+from coffeebreak.services.plugin_service import get_plugin_settings
 from time import monotonic
 from hashlib import sha256
+from datetime import datetime, timezone
 
 from coffeebreak.auth import get_user, list_users
 
@@ -50,23 +53,18 @@ class PointSystemService:
         logger.info("PointSystemService initialized with default configuration")
 
     def _load_settings_from_module(self):
-        """Load plugin settings from the in-memory plugin module registry"""
+        """Load plugin settings from plugin service"""
         try:
-            from plugin_loader import plugins_modules  # lazy import to avoid cycles
-
-            if "coffeebreak-point-system-plugin" in plugins_modules:
-                plugin_module = plugins_modules["coffeebreak-point-system-plugin"]
-                if hasattr(plugin_module, "SETTINGS"):
-                    settings = plugin_module.SETTINGS
-                    self.base_url = settings.point_system_url
-                    self.timeout = float(settings.connection_timeout)
-                    self.retry_attempts = int(settings.retry_attempts)
-                    logger.info(
-                        f"Loaded plugin settings: URL={self.base_url}, Timeout={self.timeout}s"
-                    )
-                    return True
-            logger.warning("Plugin module or SETTINGS not found, using defaults")
-            return False
+            settings = get_plugin_settings("coffeebreak-point-system-plugin")
+            self.base_url = settings.get("point_system_url", self.base_url)
+            self.timeout = float(settings.get("connection_timeout", self.timeout))
+            self.retry_attempts = int(
+                settings.get("retry_attempts", self.retry_attempts)
+            )
+            logger.info(
+                f"Loaded plugin settings: URL={self.base_url}, Timeout={self.timeout}s"
+            )
+            return True
         except Exception as e:
             logger.warning(f"Failed to load plugin settings, using defaults: {e}")
             return False
@@ -351,6 +349,68 @@ class PointSystemService:
             for user_id, points in raw_entries
         ]
 
+    class health:
+        @classmethod
+        async def check(cls) -> dict:
+            try:
+                service = PointSystemService()
+                async with service:
+                    return await service._make_request("GET", "/health")
+            except Exception as e:
+                logger.error(f"Health check failed: {e}")
+                raise
+
+    class transactions:
+        @classmethod
+        async def list(
+            cls,
+            activity_id: Optional[int] = None,
+            user_id: Optional[int] = None,
+            transaction_type: Optional[str] = None,
+            skip: int = 0,
+            limit: int = 50,
+        ) -> List[Transaction]:
+            try:
+                service = PointSystemService()
+                async with service:
+                    params: dict[str, object] = {"skip": skip, "limit": limit}
+                    if activity_id is not None:
+                        params["activity_id"] = activity_id
+                    if user_id is not None:
+                        params["user_id"] = user_id
+                    if transaction_type is not None:
+                        params["transaction_type"] = transaction_type
+                    data = await service._make_request(
+                        "GET", "/points/transactions", params=params
+                    )
+                    results = []
+                    for tx_data in data:
+                        try:
+                            results.append(
+                                Transaction(
+                                    id=int(tx_data["id"]),
+                                    activity_id=int(tx_data["activity_id"])
+                                    if tx_data.get("activity_id") is not None
+                                    else None,
+                                    user_id=str(tx_data["user_id"]),
+                                    issued_by_id=str(tx_data["issued_by_id"])
+                                    if tx_data.get("issued_by_id") is not None
+                                    else None,
+                                    points=float(tx_data["points"]),
+                                    transaction_type=TransactionType(
+                                        tx_data["transaction_type"]
+                                    ),
+                                    description=tx_data.get("description"),
+                                    created_at=tx_data["created_at"],
+                                )
+                            )
+                        except (ValueError, TypeError, KeyError):
+                            continue
+                    return results
+            except Exception as e:
+                logger.error(f"Failed to list transactions: {e}")
+                raise
+
     class leaderboard:
         @classmethod
         async def get(cls) -> List[SimpleUser]:
@@ -423,7 +483,13 @@ class PointSystemService:
                 raise
 
         @classmethod
-        async def remove(cls, user_id: str, points: int) -> bool:
+        async def remove(
+            cls,
+            user_id: str,
+            points: float,
+            description: str,
+            activity_id: Optional[int] = None,
+        ) -> bool:
             """
             Remove points from a specific user.
             Args:
@@ -437,8 +503,9 @@ class PointSystemService:
                 async with service:
                     external_user_id = await service._resolve_external_user_id(user_id)
                     removal_data = {
+                        "activity_id": activity_id,
                         "points": points,
-                        "description": f"Manual removal of {points} points",
+                        "description": description,
                     }
                     await service._make_request(
                         "POST", f"/points/{external_user_id}/remove", json=removal_data
@@ -578,11 +645,14 @@ class PointSystemService:
                 async with service:
                     external_user_id = await service._resolve_external_user_id(user_id)
                     # Prepare transaction data for external service
-                    tx_data = {
+                    tx_data: dict[str, object] = {
                         "points": transaction.points,
                         "description": transaction.description,
                         "activity_id": transaction.activity_id,
                     }
+
+                    if transaction_type == TransactionType.ACTIVITY:
+                        tx_data["timestamp"] = datetime.now(timezone.utc).isoformat()
 
                     # Map internal transaction type to external service type
                     type_param = (
@@ -590,6 +660,8 @@ class PointSystemService:
                         if transaction_type == TransactionType.ACTIVITY
                         else "manual"
                     )
+                    if transaction_type == TransactionType.ACTIVITY:
+                        tx_data["timestamp"] = datetime.now(timezone.utc).isoformat()
 
                     data = await service._make_request(
                         "POST",

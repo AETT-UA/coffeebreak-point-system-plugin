@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field  # type: ignore
+from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime, timezone
 from enum import Enum
@@ -60,4 +60,17 @@ class TransactionRequest(BaseModel):
     points: int = Field(..., description="Points to be added or subtracted")
     description: Optional[str] = Field(
         None, description="Description of the transaction"
+    )
+
+
+class ActivityAwardRequest(BaseModel):
+    """
+    Request schema for awarding points through an activity template.
+    """
+
+    points: Optional[int] = Field(
+        None,
+        description=(
+            "Required only for activity templates configured with manual points_mode."
+        ),
     )

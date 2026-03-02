@@ -1,11 +1,14 @@
-from coffeebreak.utils.api import Router  # type: ignore
+from coffeebreak.utils.api import Router
 from fastapi import HTTPException, Query, Depends, Path, Body
 from typing import List, Optional
 import logging
 import json
 from fastapi.responses import JSONResponse
+from coffeebreak.dependencies.database import get_db  # type: ignore
+from sqlalchemy.orm import Session  # type: ignore
 
 from ..schemas.point_system import (
+    ActivityAwardRequest,
     SimpleUser,
     Transaction,
     TransactionRequest,
@@ -17,10 +20,14 @@ from ..services.point_system_service import (
     UpstreamPointSystemError,
     UserIdMappingError,
 )
+from ..services.transaction_template_service import TransactionTemplateService
+from coffeebreak.dependencies.auth import check_role
 
 logger = logging.getLogger("coffeebreak.point_system")
 
 router = Router()
+ROLE = "manage_transaction_templates"
+BYPASS_ROLE = "manage_all_point_transactions"
 
 
 def _raise_upstream(e: UpstreamPointSystemError):
@@ -29,6 +36,87 @@ def _raise_upstream(e: UpstreamPointSystemError):
     except Exception:
         body = {"detail": e.detail}
     return JSONResponse(status_code=e.status_code, content=body)
+
+
+async def _enforce_activity_claim_limit(
+    user_id: str,
+    activity_id: int,
+    template_name: str,
+    claim_limit: Optional[int],
+):
+    if claim_limit is None:
+        return
+
+    try:
+        normalized_limit = int(claim_limit)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Template '{template_name}' has invalid claim_limit '{claim_limit}'. "
+                "Use 0 for unlimited or a positive integer."
+            ),
+        )
+
+    if normalized_limit <= 0:
+        return
+
+    history = await PointSystemService.points.get_history(user_id)
+    claims_count = sum(
+        1
+        for tx in history
+        if tx.transaction_type == TransactionType.ACTIVITY
+        and tx.activity_id == activity_id
+        and tx.points > 0
+    )
+
+    if claims_count >= normalized_limit:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Claim limit reached for activity {activity_id}. "
+                f"Template '{template_name}' allows at most {normalized_limit} successful claims per participant."
+            ),
+        )
+
+
+@router.get("/health")
+async def health_check():
+    try:
+        return await PointSystemService.health.check()
+    except PointSystemUnavailable as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        raise HTTPException(status_code=502, detail="Point system unreachable")
+
+
+@router.get("/transactions", response_model=List[Transaction])
+async def list_transactions(
+    activity_id: Optional[int] = Query(None, description="Filter by activity"),
+    user_id: Optional[int] = Query(None, description="Filter by user"),
+    transaction_type: Optional[str] = Query(
+        None, description="Filter by type (manual, activity)"
+    ),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, gt=0, le=100),
+    _: dict = Depends(check_role([ROLE])),
+):
+    try:
+        return await PointSystemService.transactions.list(
+            activity_id=activity_id,
+            user_id=user_id,
+            transaction_type=transaction_type,
+            skip=skip,
+            limit=limit,
+        )
+    except PointSystemUnavailable as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except UpstreamPointSystemError as e:
+        return _raise_upstream(e)
+    except Exception as e:
+        logger.error(f"Failed to list transactions: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve transactions")
 
 
 @router.get("/leaderboard", response_model=List[SimpleUser])
@@ -145,6 +233,7 @@ async def add_points(
     user_id: str = Path(..., description="User identifier"),
     transaction: TransactionRequest = Body(...),
     transaction_type: TransactionType = TransactionType.MANUAL,
+    _: dict = Depends(check_role([BYPASS_ROLE])),
 ):
     """
     Add points to user.
@@ -152,6 +241,24 @@ async def add_points(
     Creates a points transaction for a user. Use transaction_type=activity to associate to an activity.
     """
     try:
+        if transaction_type == TransactionType.MANUAL:
+            description = (transaction.description or "").strip()
+            if not description:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Description is required for manual point attribution.",
+                )
+            transaction.description = description
+
+        if (
+            transaction_type == TransactionType.ACTIVITY
+            and transaction.activity_id is None
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="activity_id is required when transaction_type is activity.",
+            )
+
         result = await PointSystemService.points.create_transaction(
             user_id, transaction, transaction_type
         )
@@ -165,9 +272,133 @@ async def add_points(
         raise HTTPException(status_code=502, detail=str(e))
     except UpstreamPointSystemError as e:
         return _raise_upstream(e)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to add points for user {user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to add points")
+
+
+@router.post("/points/{user_id}/add-activity/{activity_id}")
+async def add_activity_points(
+    user_id: str = Path(..., description="User identifier"),
+    activity_id: int = Path(..., description="Activity identifier"),
+    payload: Optional[ActivityAwardRequest] = Body(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Add activity participation points to a user using the configured activity template.
+
+    Requires exactly one transaction template configured for the given activity.
+    """
+    try:
+        template_service = TransactionTemplateService(db)
+        templates = template_service.list_templates_for_activity(activity_id)
+
+        if len(templates) == 0:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"No transaction template configured for activity {activity_id}. "
+                    "Create one activity template before awarding activity points."
+                ),
+            )
+
+        if len(templates) > 1:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Multiple transaction templates configured for activity {activity_id}. "
+                    "Keep exactly one template per activity."
+                ),
+            )
+
+        template = templates[0]
+        points_mode = str(
+            getattr(template, "points_mode", "automatic") or "automatic"
+        ).lower()
+
+        if points_mode not in {"automatic", "manual"}:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Template '{template.name}' has invalid points_mode '{points_mode}'. "
+                    "Use 'automatic' or 'manual'."
+                ),
+            )
+
+        if points_mode == "automatic":
+            points = PointSystemService._round_points(template.points)
+        else:
+            if payload is None or payload.points is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Template '{template.name}' requires manual points input. "
+                        "Provide points in request body."
+                    ),
+                )
+            points = payload.points
+
+        if points <= 0:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Template '{template.name}' for activity {activity_id} has invalid points. "
+                    "Points must be an integer greater than zero."
+                ),
+            )
+
+        description = (template.description or "").strip() or (
+            f"Participation points for activity {activity_id}"
+        )
+
+        await _enforce_activity_claim_limit(
+            user_id=user_id,
+            activity_id=activity_id,
+            template_name=template.name,
+            claim_limit=template.claim_limit,
+        )
+
+        transaction = TransactionRequest(
+            activity_id=activity_id,
+            points=points,
+            description=description,
+        )
+
+        result = await PointSystemService.points.create_transaction(
+            user_id,
+            transaction,
+            TransactionType.ACTIVITY,
+        )
+
+        if result:
+            return {
+                "message": "Activity points added successfully",
+                "activity_id": activity_id,
+                "template_id": template.id,
+                "template_name": template.name,
+                "points_mode": points_mode,
+                "awarded_points": points,
+                "transaction": result,
+            }
+
+        raise HTTPException(
+            status_code=500, detail="Failed to create activity transaction"
+        )
+    except UserIdMappingError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except PointSystemUnavailable as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except UpstreamPointSystemError as e:
+        return _raise_upstream(e)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Failed to add activity points for user {user_id} in activity {activity_id}: {e}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to add activity points")
 
 
 @router.post("/points/{user_id}/remove")
@@ -175,6 +406,10 @@ async def remove_points(
     user_id: str = Path(..., description="User identifier"),
     points: int = Query(..., description="Points to remove"),
     description: str = Query(..., description="Reason for removal"),
+    activity_id: Optional[int] = Query(
+        None, description="Optional activity identifier"
+    ),
+    _: dict = Depends(check_role([BYPASS_ROLE])),
 ):
     """
     Remove points from user.
@@ -182,7 +417,12 @@ async def remove_points(
     Removes points from a user by creating a negative transaction.
     """
     try:
-        success = await PointSystemService.points.remove(user_id, points)
+        success = await PointSystemService.points.remove(
+            user_id=user_id,
+            points=points,
+            description=description,
+            activity_id=activity_id,
+        )
         if success:
             return {
                 "message": "Points removed successfully",
