@@ -11,6 +11,7 @@ class SimpleUser(BaseModel):
 
     id: str
     name: Optional[str] = None
+    username: Optional[str] = None
     points: int
 
 

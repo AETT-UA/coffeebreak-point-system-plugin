@@ -50,10 +50,19 @@ class Update(BaseModel):
 
 class Response(Base):
     id: int
-    original_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     deleted_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+    @field_validator("points_mode", mode="before")
+    @classmethod
+    def normalize_points_mode(cls, value):
+        if isinstance(value, str):
+            return PointsMode(value)
+        return value
 
     @field_validator("points", mode="before")
     @classmethod
