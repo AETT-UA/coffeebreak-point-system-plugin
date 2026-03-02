@@ -5,7 +5,7 @@ export default function ScannerStep({
   isScannerActive,
   isVerifying,
   isSubmitting,
-  supportsBarcodeDetector,
+  supportsLiveScanning,
   videoRef,
   onStopScanner,
   onBack,
@@ -53,7 +53,7 @@ export default function ScannerStep({
           autoPlay
         />
 
-        {!supportsBarcodeDetector ? (
+        {!supportsLiveScanning ? (
           <p className="mt-2 text-sm text-warning">
             This browser does not support live QR scanning.
           </p>
@@ -80,7 +80,7 @@ ScannerStep.propTypes = {
   isScannerActive: PropTypes.bool.isRequired,
   isVerifying: PropTypes.bool.isRequired,
   isSubmitting: PropTypes.bool.isRequired,
-  supportsBarcodeDetector: PropTypes.bool.isRequired,
+  supportsLiveScanning: PropTypes.bool.isRequired,
   videoRef: PropTypes.shape({ current: PropTypes.any }).isRequired,
   onStopScanner: PropTypes.func.isRequired,
   onBack: PropTypes.func.isRequired,

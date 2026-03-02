@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { getApi } from "coffeebreak/event-app";
+import jsQR from "jsqr";
 
 const SCAN_INTERVAL_MS = 450;
 const DUPLICATE_SCAN_COOLDOWN_MS = 2500;
+const CAMERA_CONSTRAINTS = [
+  { video: { facingMode: { ideal: "environment" } }, audio: false },
+  { video: { facingMode: "environment" }, audio: false },
+  { video: true, audio: false },
+];
 
 function getErrorMessage(error, fallbackMessage) {
   const detail = error?.response?.data?.detail;
@@ -14,6 +20,31 @@ function getErrorMessage(error, fallbackMessage) {
     return detail[0].msg;
   }
   return fallbackMessage;
+}
+
+function getCameraErrorMessage(error) {
+  const errorName = error?.name;
+
+  if (errorName === "NotAllowedError" || errorName === "SecurityError") {
+    return "Camera permission denied. Allow camera access in Safari settings and use HTTPS.";
+  }
+
+  if (errorName === "NotFoundError" || errorName === "DevicesNotFoundError") {
+    return "No camera device found.";
+  }
+
+  if (errorName === "NotReadableError" || errorName === "TrackStartError") {
+    return "Camera is already in use by another app.";
+  }
+
+  if (errorName === "OverconstrainedError") {
+    return "Selected camera is not available. Try another camera.";
+  }
+
+  return getErrorMessage(
+    error,
+    "Could not start camera. Check browser permissions and HTTPS."
+  );
 }
 
 export default function TemplateQrClaimPage({
@@ -28,6 +59,7 @@ export default function TemplateQrClaimPage({
   const [successMessage, setSuccessMessage] = useState("");
 
   const videoRef = useRef(null);
+  const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const detectorRef = useRef(null);
   const scanIntervalRef = useRef(null);
@@ -38,6 +70,81 @@ export default function TemplateQrClaimPage({
 
   const supportsBarcodeDetector =
     typeof window !== "undefined" && "BarcodeDetector" in window;
+  const supportsJsQr = typeof jsQR === "function";
+  const supportsLiveScanning = supportsBarcodeDetector || supportsJsQr;
+
+  const requestCameraStream = useCallback(async () => {
+    let lastError = null;
+
+    for (const constraints of CAMERA_CONSTRAINTS) {
+      try {
+        return await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (error) {
+        lastError = error;
+        const errorName = error?.name;
+
+        if (errorName === "NotAllowedError" || errorName === "SecurityError") {
+          break;
+        }
+      }
+    }
+
+    throw lastError || new Error("Could not access camera.");
+  }, []);
+
+  const detectQrToken = useCallback(async () => {
+    const videoElement = videoRef.current;
+    if (!videoElement || videoElement.readyState < 2) {
+      return null;
+    }
+
+    if (detectorRef.current) {
+      const detections = await detectorRef.current.detect(videoElement);
+      if (!Array.isArray(detections) || detections.length === 0) {
+        return null;
+      }
+
+      const firstQr = detections.find(
+        (item) => typeof item?.rawValue === "string" && item.rawValue.trim()
+      );
+      return firstQr?.rawValue?.trim() || null;
+    }
+
+    if (!supportsJsQr) {
+      return null;
+    }
+
+    const frameWidth = videoElement.videoWidth;
+    const frameHeight = videoElement.videoHeight;
+    if (!frameWidth || !frameHeight) {
+      return null;
+    }
+
+    if (!canvasRef.current) {
+      canvasRef.current = document.createElement("canvas");
+    }
+
+    const canvas = canvasRef.current;
+    if (canvas.width !== frameWidth || canvas.height !== frameHeight) {
+      canvas.width = frameWidth;
+      canvas.height = frameHeight;
+    }
+
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      return null;
+    }
+
+    context.drawImage(videoElement, 0, 0, frameWidth, frameHeight);
+    const imageData = context.getImageData(0, 0, frameWidth, frameHeight);
+    const qrResult = jsQR(imageData.data, frameWidth, frameHeight, {
+      inversionAttempts: "attemptBoth",
+    });
+
+    return typeof qrResult?.data === "string" && qrResult.data.trim()
+      ? qrResult.data.trim()
+      : null;
+  }, [supportsJsQr]);
 
   const stopScanner = useCallback(() => {
     if (scanIntervalRef.current) {
@@ -56,6 +163,7 @@ export default function TemplateQrClaimPage({
     }
 
     detectorRef.current = null;
+    canvasRef.current = null;
     scanInProgressRef.current = false;
     setIsScannerActive(false);
   }, []);
@@ -65,7 +173,7 @@ export default function TemplateQrClaimPage({
       return;
     }
 
-    if (!supportsBarcodeDetector) {
+    if (!supportsLiveScanning) {
       setError("This browser does not support live QR scanning.");
       return;
     }
@@ -76,10 +184,7 @@ export default function TemplateQrClaimPage({
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" } },
-        audio: false,
-      });
+      const stream = await requestCameraStream();
 
       streamRef.current = stream;
 
@@ -90,13 +195,22 @@ export default function TemplateQrClaimPage({
       }
 
       videoRef.current.srcObject = stream;
+      videoRef.current.setAttribute("playsinline", "true");
       await videoRef.current.play();
 
-      detectorRef.current = new window.BarcodeDetector({ formats: ["qr_code"] });
+      if (supportsBarcodeDetector) {
+        try {
+          detectorRef.current = new window.BarcodeDetector({ formats: ["qr_code"] });
+        } catch {
+          detectorRef.current = null;
+        }
+      } else {
+        detectorRef.current = null;
+      }
+
       scanIntervalRef.current = window.setInterval(() => {
         void (async () => {
           if (
-            !detectorRef.current ||
             !videoRef.current ||
             scanInProgressRef.current ||
             claimInProgressRef.current
@@ -104,25 +218,13 @@ export default function TemplateQrClaimPage({
             return;
           }
 
-          if (videoRef.current.readyState < 2) {
-            return;
-          }
-
           scanInProgressRef.current = true;
           try {
-            const detections = await detectorRef.current.detect(videoRef.current);
-            if (!Array.isArray(detections) || detections.length === 0) {
+            const token = await detectQrToken();
+            if (!token) {
               return;
             }
 
-            const firstQr = detections.find(
-              (item) => typeof item?.rawValue === "string" && item.rawValue.trim()
-            );
-            if (!firstQr) {
-              return;
-            }
-
-            const token = firstQr.rawValue.trim();
             const now = Date.now();
 
             if (
@@ -179,9 +281,16 @@ export default function TemplateQrClaimPage({
       setIsScannerActive(true);
     } catch (cameraError) {
       stopScanner();
-      setError(getErrorMessage(cameraError, "Could not start camera. Check permissions."));
+      setError(getCameraErrorMessage(cameraError));
     }
-  }, [stopScanner, successTimeoutMs, supportsBarcodeDetector]);
+  }, [
+    detectQrToken,
+    requestCameraStream,
+    stopScanner,
+    successTimeoutMs,
+    supportsBarcodeDetector,
+    supportsLiveScanning,
+  ]);
 
   useEffect(() => {
     void startScanner();
@@ -215,7 +324,7 @@ export default function TemplateQrClaimPage({
         {successMessage ? <div className="alert alert-success text-sm">{successMessage}</div> : null}
         {error ? <div className="alert alert-error text-sm">{error}</div> : null}
 
-        {!supportsBarcodeDetector ? (
+        {!supportsLiveScanning ? (
           <div className="alert alert-warning text-sm">
             Your browser does not support camera QR scanning.
           </div>
