@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
+import jsQR from "jsqr";
 import { getApi } from "coffeebreak/event-app";
 
 const SCAN_INTERVAL_MS = 450;
 const DUPLICATE_SCAN_COOLDOWN_MS = 2500;
+const JSQR_MAX_SCAN_DIMENSION = 960;
 
 function getErrorMessage(error, fallbackMessage) {
   const detail = error?.response?.data?.detail;
@@ -30,15 +32,13 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
   const [successMessage, setSuccessMessage] = useState("");
 
   const videoRef = useRef(null);
+  const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const detectorRef = useRef(null);
   const scanIntervalRef = useRef(null);
   const scanInProgressRef = useRef(false);
   const verifyInProgressRef = useRef(false);
   const lastScannedRef = useRef({ value: "", at: 0 });
-
-  const isBrowser = typeof window !== "undefined";
-  const supportsBarcodeDetector = isBrowser && "BarcodeDetector" in window;
 
   const stopScanner = useCallback(() => {
     if (scanIntervalRef.current) {
@@ -101,12 +101,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
   );
 
   const scanFrame = useCallback(async () => {
-    if (
-      !detectorRef.current ||
-      !videoRef.current ||
-      scanInProgressRef.current ||
-      verifyInProgressRef.current
-    ) {
+    if (!videoRef.current || scanInProgressRef.current || verifyInProgressRef.current) {
       return;
     }
 
@@ -118,19 +113,59 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
     scanInProgressRef.current = true;
 
     try {
-      const detections = await detectorRef.current.detect(videoElement);
-      if (!Array.isArray(detections) || detections.length === 0) {
+      let rawValue = "";
+
+      if (detectorRef.current) {
+        const detections = await detectorRef.current.detect(videoElement);
+        if (Array.isArray(detections) && detections.length > 0) {
+          const firstQr = detections.find(
+            (item) => typeof item?.rawValue === "string" && item.rawValue.trim(),
+          );
+          if (firstQr) {
+            rawValue = firstQr.rawValue.trim();
+          }
+        }
+      } else if (canvasRef.current) {
+        const sourceWidth = videoElement.videoWidth;
+        const sourceHeight = videoElement.videoHeight;
+
+        if (!sourceWidth || !sourceHeight) {
+          return;
+        }
+
+        const maxSide = Math.max(sourceWidth, sourceHeight);
+        const scale =
+          maxSide > JSQR_MAX_SCAN_DIMENSION
+            ? JSQR_MAX_SCAN_DIMENSION / maxSide
+            : 1;
+
+        const scanWidth = Math.max(1, Math.round(sourceWidth * scale));
+        const scanHeight = Math.max(1, Math.round(sourceHeight * scale));
+
+        const canvas = canvasRef.current;
+        canvas.width = scanWidth;
+        canvas.height = scanHeight;
+
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+        if (!context) {
+          return;
+        }
+
+        context.drawImage(videoElement, 0, 0, scanWidth, scanHeight);
+        const imageData = context.getImageData(0, 0, scanWidth, scanHeight);
+        const detection = jsQR(imageData.data, scanWidth, scanHeight, {
+          inversionAttempts: "dontInvert",
+        });
+
+        if (typeof detection?.data === "string" && detection.data.trim()) {
+          rawValue = detection.data.trim();
+        }
+      }
+
+      if (!rawValue) {
         return;
       }
 
-      const firstQr = detections.find(
-        (item) => typeof item?.rawValue === "string" && item.rawValue.trim(),
-      );
-      if (!firstQr) {
-        return;
-      }
-
-      const rawValue = firstQr.rawValue.trim();
       const now = Date.now();
 
       if (
@@ -162,13 +197,6 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
     setSubmitError(null);
     setSuccessMessage("");
 
-    if (!supportsBarcodeDetector) {
-      setScannerError(
-        "This browser does not support live QR scanning. Use manual QR input below.",
-      );
-      return;
-    }
-
     if (!navigator?.mediaDevices?.getUserMedia) {
       setScannerError("Camera API is not available in this browser.");
       return;
@@ -193,9 +221,13 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
 
-      detectorRef.current = new window.BarcodeDetector({
-        formats: ["qr_code"],
-      });
+      if (typeof window !== "undefined" && "BarcodeDetector" in window) {
+        detectorRef.current = new window.BarcodeDetector({
+          formats: ["qr_code"],
+        });
+      } else {
+        detectorRef.current = null;
+      }
 
       scanIntervalRef.current = window.setInterval(() => {
         void scanFrame();
@@ -211,7 +243,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
         ),
       );
     }
-  }, [isScannerActive, scanFrame, stopScanner, supportsBarcodeDetector]);
+  }, [isScannerActive, scanFrame, stopScanner]);
 
   useEffect(() => {
     return () => {
@@ -338,12 +370,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
                 muted
                 autoPlay
               />
-
-              {!supportsBarcodeDetector && (
-                <p className="mt-2 text-sm text-warning">
-                  Live scanning is not available in this browser.
-                </p>
-              )}
+              <canvas ref={canvasRef} className="hidden" aria-hidden="true" />
             </div>
 
             <div className="rounded-xl border border-base-300 bg-base-100 p-3">

@@ -1,0 +1,9 @@
+{
+  "name": "coffeebreak-point-system-plugin-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Frontend dependencies for coffeebreak-point-system-plugin",
+  "dependencies": {
+    "jsqr": "^1.4.0"
+  }
+}

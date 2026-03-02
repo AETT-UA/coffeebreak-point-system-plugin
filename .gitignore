@@ -5,3 +5,6 @@ __pycache__
 
 # Build output
 .build/
+
+# Frontend dependencies
+node_modules/
