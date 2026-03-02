@@ -36,9 +36,9 @@ class UserIdMappingError(Exception):
 class PointSystemService:
     """Service for integrating with external point system"""
 
-    _user_name_cache: Dict[str, Tuple[float, str]] = {}
+    _user_name_cache: Dict[str, Tuple[float, dict]] = {}
     _user_name_cache_ttl_seconds = 300
-    _external_user_name_cache: Tuple[float, Dict[int, str]] = (0, {})
+    _external_user_name_cache: Tuple[float, Dict[int, dict]] = (0, {})
 
     def __init__(self):
         # Default configuration - will be overridden by plugin settings
@@ -262,13 +262,15 @@ class PointSystemService:
         return mapped_id
 
     @classmethod
-    async def _get_external_user_name_map(cls) -> Dict[int, str]:
+    @classmethod
+    async def _get_external_user_name_map(cls) -> Dict[int, dict]:
+        """Get mapping of external user id -> user data (name and username)."""
         now = monotonic()
         expires_at, cached = cls._external_user_name_cache
         if cached and expires_at > now:
             return cached
 
-        resolved: Dict[int, str] = {}
+        resolved: Dict[int, dict] = {}
         try:
             users = await list_users()
             for user in users:
@@ -280,10 +282,10 @@ class PointSystemService:
                 if external_id is None:
                     continue
 
-                resolved[external_id] = cls._display_name_from_user(
-                    user,
-                    fallback=str(external_id),
-                )
+                resolved[external_id] = {
+                    "name": cls._display_name_from_user(user, fallback=str(external_id)),
+                    "username": user.get("username") or user.get("email"),
+                }
         except Exception as e:
             logger.warning(f"Failed to build external user id -> name map: {e}")
 
@@ -299,26 +301,29 @@ class PointSystemService:
         now = monotonic()
         cached = cls._user_name_cache.get(user_id)
         if cached and cached[0] > now:
-            return cached[1]
+            return cached[1]["name"]
 
-        resolved_name = user_id
+        user_data = {"name": user_id, "username": None}
 
         try:
             user = await get_user(user_id)
-            resolved_name = cls._display_name_from_user(user, fallback=user_id)
+            user_data["name"] = cls._display_name_from_user(user, fallback=user_id)
+            user_data["username"] = user.get("username") or user.get("email")
         except Exception as e:
             parsed_external_id = cls._parse_int(user_id)
             if parsed_external_id is not None:
-                external_names = await cls._get_external_user_name_map()
-                resolved_name = external_names.get(parsed_external_id, user_id)
+                external_data = await cls._get_external_user_name_map()
+                fetched = external_data.get(parsed_external_id, {})
+                user_data["name"] = fetched.get("name", user_id)
+                user_data["username"] = fetched.get("username")
             else:
                 logger.warning(f"Failed to resolve user name for {user_id}: {e}")
 
         cls._user_name_cache[user_id] = (
             now + cls._user_name_cache_ttl_seconds,
-            resolved_name,
+            user_data,
         )
-        return resolved_name
+        return user_data["name"]
 
     @classmethod
     async def _build_leaderboard_entries(cls, data: list) -> List[SimpleUser]:
@@ -341,15 +346,59 @@ class PointSystemService:
             return []
 
         unique_user_ids = list(dict.fromkeys(user_id for user_id, _ in raw_entries))
-        resolved_names = await asyncio.gather(
-            *(cls._resolve_user_name(user_id) for user_id in unique_user_ids)
+        
+        # Fetch user data in parallel
+        user_data_list = await asyncio.gather(
+            *(cls._get_user_data(user_id) for user_id in unique_user_ids),
+            return_exceptions=True
         )
-        name_by_id = dict(zip(unique_user_ids, resolved_names))
+        
+        user_data_by_id = {}
+        for user_id, user_data in zip(unique_user_ids, user_data_list):
+            if isinstance(user_data, Exception):
+                user_data_by_id[user_id] = {"name": user_id, "username": None}
+            else:
+                user_data_by_id[user_id] = user_data
 
         return [
-            SimpleUser(id=user_id, name=name_by_id.get(user_id, user_id), points=points)
+            SimpleUser(
+                id=user_id,
+                name=user_data_by_id.get(user_id, {}).get("name", user_id),
+                username=user_data_by_id.get(user_id, {}).get("username"),
+                points=points
+            )
             for user_id, points in raw_entries
         ]
+
+    @classmethod
+    async def _get_user_data(cls, user_id: str) -> dict:
+        """Get user display name and username from Keycloak."""
+        now = monotonic()
+        cached = cls._user_name_cache.get(user_id)
+        if cached and cached[0] > now:
+            return cached[1]
+
+        user_data = {"name": user_id, "username": None}
+
+        try:
+            user = await get_user(user_id)
+            user_data["name"] = cls._display_name_from_user(user, fallback=user_id)
+            user_data["username"] = user.get("username") or user.get("email")
+        except Exception as e:
+            parsed_external_id = cls._parse_int(user_id)
+            if parsed_external_id is not None:
+                external_data = await cls._get_external_user_name_map()
+                fetched = external_data.get(parsed_external_id, {})
+                user_data["name"] = fetched.get("name", user_id)
+                user_data["username"] = fetched.get("username")
+            else:
+                logger.warning(f"Failed to resolve user data for {user_id}: {e}")
+
+        cls._user_name_cache[user_id] = (
+            now + cls._user_name_cache_ttl_seconds,
+            user_data,
+        )
+        return user_data
 
     class leaderboard:
         @classmethod

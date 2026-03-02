@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { getApi } from "coffeebreak/event-app";
+import { HiRefresh } from "react-icons/hi";
 
 function getErrorMessage(error, fallbackMessage) {
   const detail = error?.response?.data?.detail;
@@ -14,6 +15,17 @@ function getErrorMessage(error, fallbackMessage) {
   }
 
   return fallbackMessage;
+}
+
+function getCurrentUserId() {
+  try {
+    const keycloak = globalThis.__coffeebreak_keycloak;
+    const token = keycloak?.tokenParsed;
+    return token?.preferred_username || token?.sub || null;
+  } catch (err) {
+    console.error('[LeaderboardPage] Error getting current user ID:', err);
+    return null;
+  }
 }
 
 function formatLastUpdated(dateValue) {
@@ -34,12 +46,15 @@ export default function LeaderboardPage({
   limit = 10,
   show_rank = true,
   refresh_seconds = 30,
+  items_per_page = 10,
 }) {
   const [rows, setRows] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [currentUserId, setCurrentUserId] = useState(null);
 
   const endpoint = useMemo(() => {
     const hasActivityId =
@@ -70,6 +85,18 @@ export default function LeaderboardPage({
     return Math.floor(parsed);
   }, [refresh_seconds]);
 
+  const normalizedItemsPerPage = useMemo(() => {
+    const parsed = Number(items_per_page);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return 10;
+    }
+    return Math.floor(parsed);
+  }, [items_per_page]);
+
+  useEffect(() => {
+    setCurrentUserId(getCurrentUserId());
+  }, []);
+
   const loadLeaderboard = useCallback(
     async ({ silent } = { silent: false }) => {
       if (silent) {
@@ -92,6 +119,7 @@ export default function LeaderboardPage({
               typeof item?.name === "string" && item.name.trim()
                 ? item.name.trim()
                 : String(item?.id ?? item?.user_id ?? "-"),
+            username: item?.username || null,
             points: Number(item?.points ?? 0),
           }))
           .sort((left, right) => right.points - left.points)
@@ -100,7 +128,7 @@ export default function LeaderboardPage({
             ...item,
             rank: index + 1,
           }));
-
+        
         setRows(normalized);
         setLastUpdatedAt(new Date());
       } catch (requestError) {
@@ -136,6 +164,29 @@ export default function LeaderboardPage({
     };
   }, [loadLeaderboard, normalizedRefreshSeconds]);
 
+  // Pagination calculations
+  const totalPages = Math.ceil(rows.length / normalizedItemsPerPage);
+  const startIndex = (currentPage - 1) * normalizedItemsPerPage;
+  const endIndex = startIndex + normalizedItemsPerPage;
+  const paginatedRows = rows.slice(startIndex, endIndex);
+
+  // Reset to page 1 when data changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [rows.length]);
+
+  const handlePrevPage = () => {
+    setCurrentPage((prev) => Math.max(1, prev - 1));
+  };
+
+  const handleNextPage = () => {
+    setCurrentPage((prev) => Math.min(totalPages, prev + 1));
+  };
+
+  const handlePageClick = (page) => {
+    setCurrentPage(page);
+  };
+
   return (
     <section className="card bg-base-100 shadow-md border border-base-300">
       <div className="card-body gap-4">
@@ -150,13 +201,14 @@ export default function LeaderboardPage({
           </div>
           <button
             type="button"
-            className="btn btn-outline btn-sm"
+            className="btn btn-outline btn-sm btn-square"
             onClick={() => {
               void loadLeaderboard({ silent: true });
             }}
             disabled={isLoading || isRefreshing}
+            title={isRefreshing ? "Refreshing..." : "Refresh"}
           >
-            {isRefreshing ? "Refreshing..." : "Refresh"}
+            <HiRefresh className={`text-lg ${isRefreshing ? "animate-spin" : ""}`} />
           </button>
         </div>
 
@@ -189,47 +241,130 @@ export default function LeaderboardPage({
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((entry) => (
-                    <tr key={`${entry.user_id}-${entry.rank}`}>
-                      {show_rank && (
-                        <td>
-                          <span className="badge badge-ghost">#{entry.rank}</span>
-                        </td>
-                      )}
-                      <td>
-                        <div className="font-medium">{entry.user_name}</div>
-                        {entry.user_name !== entry.user_id && (
-                          <div className="text-xs text-base-content/60">{entry.user_id}</div>
+                  {paginatedRows.map((entry) => {
+                    const isCurrentUser = currentUserId && entry.username && entry.username === currentUserId;
+                    return (
+                      <tr 
+                        key={`${entry.user_id}-${entry.rank}`}
+                        className={isCurrentUser ? "bg-primary/10 font-semibold" : ""}
+                      >
+                        {show_rank && (
+                          <td>
+                            <span className={`badge ${isCurrentUser ? "badge-primary" : "badge-ghost"}`}>
+                              #{entry.rank}
+                            </span>
+                          </td>
                         )}
-                      </td>
-                      <td className="text-right font-semibold">{entry.points}</td>
-                    </tr>
-                  ))}
+                        <td>
+                          <div className="flex items-center gap-2">
+                            <div>
+                              <div className="font-medium">
+                                {entry.user_name}
+                                {isCurrentUser && <span className="ml-2 text-xs text-primary">(You)</span>}
+                              </div>
+                              {entry.user_name !== entry.user_id && (
+                                <div className="text-xs text-base-content/60">{entry.user_id}</div>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="text-right font-semibold">{entry.points}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
 
             <div className="md:hidden grid grid-cols-1 gap-2">
-              {rows.map((entry) => (
-                <div
-                  key={`${entry.user_id}-${entry.rank}`}
-                  className="rounded-lg border border-base-300 p-3 bg-base-100"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <div className="font-medium break-all">{entry.user_name}</div>
-                      {entry.user_name !== entry.user_id && (
-                        <div className="text-xs text-base-content/60 break-all">{entry.user_id}</div>
+              {paginatedRows.map((entry) => {
+                const isCurrentUser = currentUserId && entry.username && entry.username === currentUserId;
+                return (
+                  <div
+                    key={`${entry.user_id}-${entry.rank}`}
+                    className={`rounded-lg border p-3 ${
+                      isCurrentUser 
+                        ? "border-primary bg-primary/10" 
+                        : "border-base-300 bg-base-100"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="font-medium break-all">
+                          {entry.user_name}
+                          {isCurrentUser && <span className="ml-2 text-xs text-primary">(You)</span>}
+                        </div>
+                        {entry.user_name !== entry.user_id && (
+                          <div className="text-xs text-base-content/60 break-all">{entry.user_id}</div>
+                        )}
+                      </div>
+                      {show_rank && (
+                        <span className={`badge ${isCurrentUser ? "badge-primary" : "badge-ghost"}`}>
+                          #{entry.rank}
+                        </span>
                       )}
                     </div>
-                    {show_rank && <span className="badge badge-ghost">#{entry.rank}</span>}
+                    <div className="mt-1 text-sm text-base-content/70">
+                      Points: <span className="font-semibold text-base-content">{entry.points}</span>
+                    </div>
                   </div>
-                  <div className="mt-1 text-sm text-base-content/70">
-                    Points: <span className="font-semibold text-base-content">{entry.points}</span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
+
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between gap-4 pt-4 border-t border-base-300">
+                <div className="text-sm text-base-content/70">
+                  Page {currentPage} of {totalPages} ({rows.length} total)
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline"
+                    onClick={handlePrevPage}
+                    disabled={currentPage === 1}
+                  >
+                    ← Prev
+                  </button>
+                  
+                  {/* Page numbers */}
+                  <div className="hidden sm:flex items-center gap-1">
+                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                      let pageNum;
+                      if (totalPages <= 5) {
+                        pageNum = i + 1;
+                      } else if (currentPage <= 3) {
+                        pageNum = i + 1;
+                      } else if (currentPage >= totalPages - 2) {
+                        pageNum = totalPages - 4 + i;
+                      } else {
+                        pageNum = currentPage - 2 + i;
+                      }
+                      
+                      return (
+                        <button
+                          key={pageNum}
+                          type="button"
+                          className={`btn btn-sm ${currentPage === pageNum ? "btn-primary" : "btn-ghost"}`}
+                          onClick={() => handlePageClick(pageNum)}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline"
+                    onClick={handleNextPage}
+                    disabled={currentPage === totalPages}
+                  >
+                    Next →
+                  </button>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -243,4 +378,5 @@ LeaderboardPage.propTypes = {
   limit: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   show_rank: PropTypes.bool,
   refresh_seconds: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  items_per_page: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
 };
