@@ -24,3 +24,7 @@ export_name = "default"
 [[tool.coffeebreak.components]]
 name = "LeaderboardPage"
 file = "LeaderboardPage.jsx"
+
+[[tool.coffeebreak.components]]
+name = "MyPointsPage"
+file = "MyPointsPage.jsx"
