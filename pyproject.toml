@@ -19,3 +19,8 @@ file = "StaffPage.jsx"
 [[tool.coffeebreak.components]]
 name = "LeaderboardPage"
 file = "LeaderboardPage.jsx"
+
+[tool.coffeebreak.admin_page]
+file = "admin/Page.jsx"
+route_slug = "coffeebreak-point-system-plugin"
+export_name = "default"

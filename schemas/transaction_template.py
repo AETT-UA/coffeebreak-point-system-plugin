@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator  # type: ignore
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
 
@@ -8,19 +8,19 @@ class Base(BaseModel):
     Base schema for Transaction templates
     Attributes:
         name (str): Unique name for the template
-        template (str): Message template with placeholders
+        points (float): Points associated with the transaction
     """
 
     name: str = Field(..., min_length=1, description="Unique name for the template")
     activity_id: Optional[int] = Field(
         None, description="ID of the associated activity"
     )
-    points: int = Field(..., description="Points associated with the transaction")
+    points: float = Field(..., description="Points associated with the transaction")
     description: Optional[str] = Field(
         None, description="Description of the transaction template"
     )
     claim_limit: Optional[int] = Field(
-        0, description="Maximum number of claims allowed for this template"
+        0, description="Maximum number of claims allowed for this template (0 = unlimited)"
     )
 
 
@@ -36,7 +36,7 @@ class Update(BaseModel):
     activity_id: Optional[int] = Field(
         None, description="ID of the associated activity"
     )
-    points: Optional[int] = Field(
+    points: Optional[float] = Field(
         None, description="Points associated with the transaction"
     )
     description: Optional[str] = Field(
@@ -54,8 +54,10 @@ class Response(Base):
     """
 
     id: int
+    original_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    deleted_at: Optional[datetime] = None
 
     @field_validator("points", mode="before")
     @classmethod
@@ -68,7 +70,23 @@ class Response(Base):
         except (TypeError, ValueError):
             return value
 
-        if numeric >= 0:
-            return int(numeric + 0.5)
+        # Since points is now float, just return the float value
+        return numeric
 
-        return int(numeric - 0.5)
+
+class ExecuteRequest(BaseModel):
+    user_id: str = Field(..., min_length=1, description="Target user identifier")
+
+
+class UserPermissionCreate(BaseModel):
+    user_sub: str = Field(..., min_length=1, description="User subject claim (sub)")
+
+
+class RolePermissionCreate(BaseModel):
+    role_name: str = Field(..., min_length=1, description="Role name")
+
+
+class PermissionsResponse(BaseModel):
+    template_id: int
+    user_subs: List[str]
+    role_names: List[str]
