@@ -12,11 +12,13 @@ The plugin allows not only for administrator management of the system but also f
 - **Transaction History**: View detailed transaction history for users
 - **Points Management**: Add or remove points from users
 - **Activity Integration**: Track points within specific activities
+- **Template QR Claims**: Generate QR codes for enabled templates and let participants claim points by scanning them
 
 ## UI Components
 
 - **StaffPage**: Staff QR scanner and manual point attribution flow.
 - **LeaderboardPage**: Event-app leaderboard view with optional activity filter, rank display, row limit, and auto-refresh.
+- **TemplateQrClaimPage**: Participant scanner that claims points by scanning template QR codes.
 
 ## Configuration
 

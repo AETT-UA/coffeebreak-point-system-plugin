@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Double, Integer, Text, DateTime, String
+from sqlalchemy import Column, Double, Integer, Text, DateTime, String, Boolean
 from sqlalchemy.sql import func
 from coffeebreak.dependencies.database import Base
 
@@ -15,6 +15,7 @@ class TransactionTemplate(Base):
     deleted_at = Column(DateTime(timezone=True), nullable=True)
 
     activity_id = Column(Integer, nullable=True)
+    qr_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     points_mode = Column(String, nullable=False, server_default="automatic")
     points = Column(Double, nullable=False)
     description = Column(Text, nullable=True)

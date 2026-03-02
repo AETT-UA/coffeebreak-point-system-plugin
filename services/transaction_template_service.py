@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..models.transaction_template import TransactionTemplate
+from ..models.transaction_template_qr_claim import TransactionTemplateQrClaim
 from ..models.transaction_template_permission import (
     TransactionTemplateUserPermission,
     TransactionTemplateRolePermission,
@@ -40,6 +41,25 @@ class TransactionTemplateService:
         )
 
     @staticmethod
+    def _normalize_qr_enabled(value) -> bool:
+        if isinstance(value, bool):
+            return value
+
+        if value is None:
+            return False
+
+        if isinstance(value, (int, float)):
+            return bool(value)
+
+        lowered = str(value).strip().lower()
+        if lowered in {"true", "1", "yes", "y", "on"}:
+            return True
+        if lowered in {"false", "0", "no", "n", "off", ""}:
+            return False
+
+        raise HTTPException(status_code=422, detail="qr_enabled must be a boolean.")
+
+    @staticmethod
     def _round_points(value) -> int:
         numeric = float(value)
         if numeric >= 0:
@@ -69,6 +89,9 @@ class TransactionTemplateService:
 
         template_data["points_mode"] = points_mode
         template_data["points"] = points_value
+        template_data["qr_enabled"] = self._normalize_qr_enabled(
+            template_data.get("qr_enabled")
+        )
 
         db_template = TransactionTemplate(**template_data)
 
@@ -117,6 +140,9 @@ class TransactionTemplateService:
 
         db_template.points_mode = points_mode
         db_template.points = points_value
+        db_template.qr_enabled = self._normalize_qr_enabled(
+            getattr(db_template, "qr_enabled", False)
+        )
 
         try:
             self.db.commit()
@@ -291,3 +317,26 @@ class TransactionTemplateService:
             is not None
         )
         return role_permission_exists
+
+    def count_qr_claims_for_user(self, template_id: int, user_sub: str) -> int:
+        return (
+            self.db.query(TransactionTemplateQrClaim.id)
+            .filter(
+                TransactionTemplateQrClaim.template_id == template_id,
+                TransactionTemplateQrClaim.user_sub == user_sub,
+            )
+            .count()
+        )
+
+    def register_qr_claim(
+        self, template_id: int, user_sub: str, transaction_id: Optional[int] = None
+    ) -> TransactionTemplateQrClaim:
+        claim = TransactionTemplateQrClaim(
+            template_id=template_id,
+            user_sub=user_sub,
+            transaction_id=transaction_id,
+        )
+        self.db.add(claim)
+        self.db.commit()
+        self.db.refresh(claim)
+        return claim
