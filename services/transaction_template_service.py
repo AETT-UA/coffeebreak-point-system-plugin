@@ -1,16 +1,19 @@
-from typing import List, Optional           # type: ignore
-from sqlalchemy.orm import Session          # type: ignore
-from sqlalchemy.exc import IntegrityError   # type: ignore
-from coffeebreak.utils.api import HTTPException         # type: ignore
+from typing import List, Optional  # type: ignore
+from sqlalchemy.orm import Session  # type: ignore
+from sqlalchemy.exc import IntegrityError  # type: ignore
+from coffeebreak.utils.api import HTTPException  # type: ignore
 
 from ..models.transaction_template import TransactionTemplate
 from ..schemas import transaction_template as tp
 
-class TransactionTemplateService:
-    def __init__(self, db:Session):
-        self.db:Session = db
 
-    def create_template(self, template: TransactionTemplate) -> Optional[TransactionTemplate]:
+class TransactionTemplateService:
+    def __init__(self, db: Session):
+        self.db: Session = db
+
+    def create_template(
+        self, template: TransactionTemplate
+    ) -> Optional[TransactionTemplate]:
         """
         Create a new transaction template
 
@@ -23,17 +26,19 @@ class TransactionTemplateService:
         Raises:
             HTTPException: If template with same name already exists
         """
+
         def fail():
             raise HTTPException(
-                status_code=400,
-                detail="Template with this name already exists"
+                status_code=400, detail="Template with this name already exists"
             )
 
         # check if a template with the same name already exists
         # This prevents the id to increase unnecessarily
-        existing_template = self.db.query(TransactionTemplate).filter(
-                TransactionTemplate.name == template.name
-            ).first()
+        existing_template = (
+            self.db.query(TransactionTemplate)
+            .filter(TransactionTemplate.name == template.name)
+            .first()
+        )
 
         if existing_template:
             fail()
@@ -59,6 +64,24 @@ class TransactionTemplateService:
         """
         return self.db.query(TransactionTemplate).all()
 
+    def list_templates_for_activity(
+        self, activity_id: int
+    ) -> List[TransactionTemplate]:
+        """
+        List transaction templates associated with a specific activity.
+
+        Args:
+            activity_id: Activity identifier
+
+        Returns:
+            List of templates for the given activity
+        """
+        return (
+            self.db.query(TransactionTemplate)
+            .filter(TransactionTemplate.activity_id == activity_id)
+            .all()
+        )
+
     def get_template(self, template_id: int) -> Optional[TransactionTemplate]:
         """
         Get a specific template by ID
@@ -69,9 +92,15 @@ class TransactionTemplateService:
         Returns:
             Template if found, None otherwise
         """
-        return self.db.query(TransactionTemplate).filter(TransactionTemplate.id == template_id).first()
+        return (
+            self.db.query(TransactionTemplate)
+            .filter(TransactionTemplate.id == template_id)
+            .first()
+        )
 
-    def update_template(self, template_id: int, template_data: tp.Update) -> Optional[TransactionTemplate]:
+    def update_template(
+        self, template_id: int, template_data: tp.Update
+    ) -> Optional[TransactionTemplate]:
         """
         Update an existing transaction template
         Args:
@@ -96,6 +125,5 @@ class TransactionTemplateService:
         except IntegrityError:
             self.db.rollback()
             raise HTTPException(
-                status_code=400,
-                detail="Template with this name already exists"
+                status_code=400, detail="Template with this name already exists"
             )

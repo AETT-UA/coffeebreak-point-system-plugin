@@ -5,6 +5,7 @@ import httpx
 from urllib.parse import urljoin
 from time import monotonic
 from hashlib import sha256
+from datetime import datetime, timezone
 
 from coffeebreak.auth import get_user, list_users
 
@@ -583,6 +584,9 @@ class PointSystemService:
                         "description": transaction.description,
                         "activity_id": transaction.activity_id,
                     }
+
+                    if transaction_type == TransactionType.ACTIVITY:
+                        tx_data["timestamp"] = datetime.now(timezone.utc).isoformat()
 
                     # Map internal transaction type to external service type
                     type_param = (
