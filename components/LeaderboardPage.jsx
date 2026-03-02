@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { getApi } from "coffeebreak/event-app";
-import { HiRefresh } from "react-icons/hi";
+import { HiRefresh, HiStar } from "react-icons/hi";
+import { FaMedal, FaTrophy } from "react-icons/fa";
 
 function getErrorMessage(error, fallbackMessage) {
   const detail = error?.response?.data?.detail;
@@ -40,6 +41,34 @@ function formatLastUpdated(dateValue) {
   }).format(dateValue);
 }
 
+function getRankIcon(rank) {
+  if (rank === 1) {
+    return (
+      <div className="flex items-center gap-2">
+        <FaTrophy className="text-yellow-500 text-lg" title="1st Place" />
+        <span className="badge badge-warning text-warning-content">#{rank}</span>
+      </div>
+    );
+  }
+  if (rank === 2) {
+    return (
+      <div className="flex items-center gap-2">
+        <FaMedal className="text-gray-400 text-lg" title="2nd Place" />
+        <span className="badge badge-neutral">#{rank}</span>
+      </div>
+    );
+  }
+  if (rank === 3) {
+    return (
+      <div className="flex items-center gap-2">
+        <FaMedal className="text-amber-700 text-lg" title="3rd Place" />
+        <span className="badge badge-accent">#{rank}</span>
+      </div>
+    );
+  }
+  return <span className="badge badge-ghost">#{rank}</span>;
+}
+
 function getRankBadgeClass(rank, isCurrentUser) {
   if (isCurrentUser) return "badge-primary";
   if (rank === 1) return "badge-warning text-warning-content";
@@ -48,19 +77,32 @@ function getRankBadgeClass(rank, isCurrentUser) {
   return "badge-ghost";
 }
 
+function getRowStyle(rank, isCurrentUser) {
+  if (isCurrentUser) return {};
+  if (rank === 1) return { backgroundImage: 'linear-gradient(to right, rgb(254 240 138), rgb(254 243 199))' };
+  if (rank === 2) return { backgroundImage: 'linear-gradient(to right, rgb(229 231 235), rgb(248 250 252))' };
+  if (rank === 3) return { backgroundImage: 'linear-gradient(to right, rgb(254 215 170), rgb(254 243 199))' };
+  return {};
+}
+
 function getRowClass(rank, isCurrentUser) {
   if (isCurrentUser) return "bg-primary/10 font-semibold";
-  if (rank === 1) return "bg-warning/5";
-  if (rank === 2) return "bg-neutral/5";
-  if (rank === 3) return "bg-accent/5";
   return "";
+}
+
+function getMobileCardStyle(rank, isCurrentUser) {
+  if (isCurrentUser) return {};
+  if (rank === 1) return { backgroundImage: 'linear-gradient(to bottom right, rgb(254 240 138), rgb(254 243 199))' };
+  if (rank === 2) return { backgroundImage: 'linear-gradient(to bottom right, rgb(229 231 235), rgb(248 250 252))' };
+  if (rank === 3) return { backgroundImage: 'linear-gradient(to bottom right, rgb(254 215 170), rgb(254 243 199))' };
+  return {};
 }
 
 function getMobileCardClass(rank, isCurrentUser) {
   if (isCurrentUser) return "border-primary bg-primary/10";
-  if (rank === 1) return "border-warning bg-warning/5";
-  if (rank === 2) return "border-neutral bg-neutral/5";
-  if (rank === 3) return "border-accent bg-accent/5";
+  if (rank === 1) return "border-warning";
+  if (rank === 2) return "border-neutral";
+  if (rank === 3) return "border-accent";
   return "border-base-300 bg-base-100";
 }
 
@@ -241,9 +283,32 @@ export default function LeaderboardPage({
         </div>
 
         {isLoading && (
-          <div className="flex items-center gap-3 rounded-xl border border-base-300 bg-base-200/60 p-4">
-            <span className="loading loading-spinner loading-sm"></span>
-            <span className="text-sm">Loading leaderboard...</span>
+          <div className="space-y-3">
+            {/* Skeleton loading for desktop */}
+            <div className="hidden md:block space-y-2">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-4 p-3 border border-base-300 rounded-lg animate-pulse">
+                  <div className="w-12 h-8 bg-base-300 rounded"></div>
+                  <div className="flex-1">
+                    <div className="h-5 bg-base-300 rounded w-1/3 mb-2"></div>
+                    <div className="h-3 bg-base-300 rounded w-1/4"></div>
+                  </div>
+                  <div className="h-6 bg-base-300 rounded w-16"></div>
+                </div>
+              ))}
+            </div>
+            {/* Skeleton loading for mobile */}
+            <div className="md:hidden space-y-2">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="p-4 border border-base-300 rounded-lg animate-pulse">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="h-5 bg-base-300 rounded w-2/5"></div>
+                    <div className="w-12 h-6 bg-base-300 rounded"></div>
+                  </div>
+                  <div className="h-4 bg-base-300 rounded w-1/4"></div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -271,12 +336,13 @@ export default function LeaderboardPage({
                       <tr 
                         key={`${entry.user_id}-${entry.rank}`}
                         className={getRowClass(entry.rank, isCurrentUser)}
+                        style={getRowStyle(entry.rank, isCurrentUser)}
                       >
                         {show_rank && (
                           <td>
-                            <span className={`badge ${getRankBadgeClass(entry.rank, isCurrentUser)}`}>
-                              #{entry.rank}
-                            </span>
+                            <div className="flex items-center">
+                              {getRankIcon(entry.rank)}
+                            </div>
                           </td>
                         )}
                         <td>
@@ -307,6 +373,7 @@ export default function LeaderboardPage({
                   <div
                     key={`${entry.user_id}-${entry.rank}`}
                     className={`rounded-lg border p-3 ${getMobileCardClass(entry.rank, isCurrentUser)}`}
+                    style={getMobileCardStyle(entry.rank, isCurrentUser)}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div>
@@ -319,9 +386,9 @@ export default function LeaderboardPage({
                         )}
                       </div>
                       {show_rank && (
-                        <span className={`badge ${getRankBadgeClass(entry.rank, isCurrentUser)}`}>
-                          #{entry.rank}
-                        </span>
+                        <div className="flex items-center justify-center min-w-fit">
+                          {getRankIcon(entry.rank)}
+                        </div>
                       )}
                     </div>
                     <div className="mt-1 text-sm text-base-content/70">
