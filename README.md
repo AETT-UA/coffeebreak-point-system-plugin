@@ -13,6 +13,11 @@ The plugin allows not only for administrator management of the system but also f
 - **Points Management**: Add or remove points from users
 - **Activity Integration**: Track points within specific activities
 
+## UI Components
+
+- **StaffPage**: Staff QR scanner and manual point attribution flow.
+- **LeaderboardPage**: Event-app leaderboard view with optional activity filter, rank display, row limit, and auto-refresh.
+
 ## Configuration
 
 The plugin is configured through the CoffeeBreak plugin settings system. Available settings:
