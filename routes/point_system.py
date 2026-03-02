@@ -38,6 +38,48 @@ def _raise_upstream(e: UpstreamPointSystemError):
     return JSONResponse(status_code=e.status_code, content=body)
 
 
+async def _enforce_activity_claim_limit(
+    user_id: str,
+    activity_id: int,
+    template_name: str,
+    claim_limit: Optional[int],
+):
+    if claim_limit is None:
+        return
+
+    try:
+        normalized_limit = int(claim_limit)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Template '{template_name}' has invalid claim_limit '{claim_limit}'. "
+                "Use 0 for unlimited or a positive integer."
+            ),
+        )
+
+    if normalized_limit <= 0:
+        return
+
+    history = await PointSystemService.points.get_history(user_id)
+    claims_count = sum(
+        1
+        for tx in history
+        if tx.transaction_type == TransactionType.ACTIVITY
+        and tx.activity_id == activity_id
+        and tx.points > 0
+    )
+
+    if claims_count >= normalized_limit:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Claim limit reached for activity {activity_id}. "
+                f"Template '{template_name}' allows at most {normalized_limit} successful claims per participant."
+            ),
+        )
+
+
 @router.get("/health")
 async def health_check():
     try:
@@ -309,6 +351,13 @@ async def add_activity_points(
 
         description = (template.description or "").strip() or (
             f"Participation points for activity {activity_id}"
+        )
+
+        await _enforce_activity_claim_limit(
+            user_id=user_id,
+            activity_id=activity_id,
+            template_name=template.name,
+            claim_limit=template.claim_limit,
         )
 
         transaction = TransactionRequest(
