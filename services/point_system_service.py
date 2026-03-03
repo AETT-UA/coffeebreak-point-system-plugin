@@ -508,6 +508,24 @@ class PointSystemService:
 
     class points:
         @classmethod
+        async def _fetch_history(
+            cls, service: "PointSystemService", user_id: str
+        ) -> list:
+            """Fetch history from upstream; treat 404 as empty history for first-time users."""
+            try:
+                data = await service._make_request("GET", f"/points/{user_id}/history")
+                history = data.get("history") if isinstance(data, dict) else None
+                return history if isinstance(history, list) else []
+            except UpstreamPointSystemError as e:
+                if e.status_code == 404:
+                    logger.info(
+                        "Point system history is empty for external user %s (404 upstream). Treating as no history.",
+                        user_id,
+                    )
+                    return []
+                raise
+
+        @classmethod
         async def get(cls, user_id: str) -> int:
             """
             Retrieve the points of a specific user.
@@ -520,20 +538,17 @@ class PointSystemService:
                 service = PointSystemService()
                 async with service:
                     external_user_id = await service._resolve_external_user_id(user_id)
-                    # Get user history and calculate current balance
-                    data = await service._make_request(
-                        "GET", f"/points/{external_user_id}/history"
-                    )
-                    history = data.get("history") if isinstance(data, dict) else None
-                    if isinstance(history, list) and history:
-                        total = 0
-                        for tx in history:
-                            try:
-                                total += service._round_points(tx.get("points", 0))
-                            except (ValueError, TypeError):
-                                continue
-                        return max(0, total)
-                    return 0
+                    history = await cls._fetch_history(service, external_user_id)
+                    if not history:
+                        return 0
+
+                    total = 0
+                    for tx in history:
+                        try:
+                            total += service._round_points(tx.get("points", 0))
+                        except (ValueError, TypeError):
+                            continue
+                    return max(0, total)
             except Exception as e:
                 logger.error(f"Failed to get points for user {user_id}: {e}")
                 raise
@@ -589,60 +604,58 @@ class PointSystemService:
                 service = PointSystemService()
                 async with service:
                     external_user_id = await service._resolve_external_user_id(user_id)
-                    data = await service._make_request(
-                        "GET", f"/points/{external_user_id}/history"
-                    )
-                    history = data.get("history") if isinstance(data, dict) else None
-                    if isinstance(history, list):
-                        transactions = []
-                        for tx_data in history:
-                            try:
-                                tx_id = (
-                                    int(tx_data["id"])
-                                    if tx_data.get("id") is not None
-                                    else None
-                                )
-                                tx_user_id = (
-                                    str(tx_data["user_id"])
-                                    if tx_data.get("user_id") is not None
-                                    else None
-                                )
-                                tx_activity_id = (
-                                    int(tx_data["activity_id"])
-                                    if tx_data.get("activity_id") is not None
-                                    else None
-                                )
-                                tx_issued_by_id = (
-                                    str(tx_data["issued_by_id"])
-                                    if tx_data.get("issued_by_id") is not None
-                                    else None
-                                )
-                                tx_points = (
-                                    service._round_points(tx_data["points"])
-                                    if tx_data.get("points") is not None
-                                    else 0
-                                )
-                                if tx_id is None or tx_user_id is None:
-                                    continue
-                                tx = Transaction(
-                                    id=tx_id,
-                                    activity_id=tx_activity_id,
-                                    user_id=tx_user_id,
-                                    user_name=None,
-                                    user_username=None,
-                                    issued_by_id=tx_issued_by_id,
-                                    points=tx_points,
-                                    transaction_type=TransactionType(
-                                        tx_data["transaction_type"]
-                                    ),
-                                    description=tx_data.get("description"),
-                                    created_at=tx_data["created_at"],
-                                )
-                                transactions.append(tx)
-                            except (ValueError, TypeError, KeyError):
+                    history = await cls._fetch_history(service, external_user_id)
+                    if not history:
+                        return []
+
+                    transactions = []
+                    for tx_data in history:
+                        try:
+                            tx_id = (
+                                int(tx_data["id"])
+                                if tx_data.get("id") is not None
+                                else None
+                            )
+                            tx_user_id = (
+                                str(tx_data["user_id"])
+                                if tx_data.get("user_id") is not None
+                                else None
+                            )
+                            tx_activity_id = (
+                                int(tx_data["activity_id"])
+                                if tx_data.get("activity_id") is not None
+                                else None
+                            )
+                            tx_issued_by_id = (
+                                str(tx_data["issued_by_id"])
+                                if tx_data.get("issued_by_id") is not None
+                                else None
+                            )
+                            tx_points = (
+                                service._round_points(tx_data["points"])
+                                if tx_data.get("points") is not None
+                                else 0
+                            )
+                            if tx_id is None or tx_user_id is None:
                                 continue
-                        return transactions
-                    return []
+                            tx = Transaction(
+                                id=tx_id,
+                                activity_id=tx_activity_id,
+                                user_id=tx_user_id,
+                                user_name=None,
+                                user_username=None,
+                                issued_by_id=tx_issued_by_id,
+                                points=tx_points,
+                                transaction_type=TransactionType(
+                                    tx_data["transaction_type"]
+                                ),
+                                description=tx_data.get("description"),
+                                created_at=tx_data["created_at"],
+                            )
+                            transactions.append(tx)
+                        except (ValueError, TypeError, KeyError):
+                            continue
+                    return transactions
             except Exception as e:
                 logger.error(f"Failed to get history for user {user_id}: {e}")
                 raise
@@ -662,20 +675,16 @@ class PointSystemService:
                 async with service:
                     external_user_id = await service._resolve_external_user_id(user_id)
                     # Get user history and filter by activity
-                    data = await service._make_request(
-                        "GET", f"/points/{external_user_id}/history"
+                    history = await cls._fetch_history(service, external_user_id)
+                    if not history:
+                        return 0
+
+                    activity_balance = sum(
+                        service._round_points(tx.get("points", 0))
+                        for tx in history
+                        if service._safe_int_compare(tx.get("activity_id"), activity_id)
                     )
-                    if "history" in data and data["history"]:
-                        # Calculate balance for specific activity
-                        activity_balance = sum(
-                            service._round_points(tx["points"])
-                            for tx in data["history"]
-                            if service._safe_int_compare(
-                                tx.get("activity_id"), activity_id
-                            )
-                        )
-                        return max(0, activity_balance)
-                    return 0
+                    return max(0, activity_balance)
             except Exception as e:
                 logger.error(
                     f"Failed to get points for user {user_id} in activity {activity_id}: {e}"

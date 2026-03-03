@@ -6,7 +6,6 @@ export default function ActivitySelectionStep({
   isLoadingTemplates,
   activitiesLoading,
   selectedActivity,
-  duplicateActivityIds,
   templatesError,
   activitiesError,
   onChangeActivity,
@@ -44,12 +43,6 @@ export default function ActivitySelectionStep({
               ? `Selected ${selectedActivity.name}. After scanning, enter points manually and transaction will stay tied to this activity.`
               : `Selected ${selectedActivity.name}. Participants will receive ${selectedActivity.points} points automatically.`}
           </span>
-        </div>
-      )}
-
-      {duplicateActivityIds.length > 0 && (
-        <div className="alert alert-warning text-sm">
-          <span>Some activities have multiple templates configured and are hidden from selection.</span>
         </div>
       )}
 
@@ -101,8 +94,8 @@ ActivitySelectionStep.propTypes = {
     points: PropTypes.number.isRequired,
     pointsMode: PropTypes.string.isRequired,
     templateName: PropTypes.string,
+    templateId: PropTypes.number,
   }),
-  duplicateActivityIds: PropTypes.arrayOf(PropTypes.number).isRequired,
   templatesError: PropTypes.string,
   activitiesError: PropTypes.string,
   onChangeActivity: PropTypes.func.isRequired,
