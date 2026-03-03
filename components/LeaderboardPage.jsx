@@ -184,7 +184,7 @@ export default function LeaderboardPage({
             user_name:
               typeof item?.name === "string" && item.name.trim()
                 ? item.name.trim()
-                : String(item?.id ?? item?.user_id ?? "-"),
+                : "Participant",
             username: item?.username || null,
             points: Number(item?.points ?? 0),
           }))
@@ -352,9 +352,6 @@ export default function LeaderboardPage({
                                 {entry.user_name}
                                 {isCurrentUser && <span className="ml-2 text-xs text-primary">(You)</span>}
                               </div>
-                              {entry.user_name !== entry.user_id && (
-                                <div className="text-xs text-base-content/60">{entry.user_id}</div>
-                              )}
                             </div>
                           </div>
                         </td>
@@ -381,9 +378,6 @@ export default function LeaderboardPage({
                           {entry.user_name}
                           {isCurrentUser && <span className="ml-2 text-xs text-primary">(You)</span>}
                         </div>
-                        {entry.user_name !== entry.user_id && (
-                          <div className="text-xs text-base-content/60 break-all">{entry.user_id}</div>
-                        )}
                       </div>
                       {show_rank && (
                         <div className="flex items-center justify-center min-w-fit">
