@@ -33,32 +33,46 @@ class TransactionTemplateService:
         bind = self.db.get_bind()
         inspector = inspect(bind)
 
-        if "transaction_templates" in inspector.get_table_names():
-            columns = {
+        def ensure_column(column_name: str, ddl: str) -> None:
+            current_columns = {
                 column["name"]
-                for column in inspector.get_columns("transaction_templates")
+                for column in inspect(bind).get_columns("transaction_templates")
             }
-            if "claim_limit_mode" not in columns:
-                try:
-                    self.db.execute(
-                        text(
-                            "ALTER TABLE transaction_templates "
-                            "ADD COLUMN claim_limit_mode VARCHAR(32) "
-                            "NOT NULL DEFAULT 'per_user'"
-                        )
+            if column_name in current_columns:
+                return
+
+            try:
+                self.db.execute(text(ddl))
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                refreshed_columns = {
+                    column["name"]
+                    for column in inspect(bind).get_columns("transaction_templates")
+                }
+                if column_name not in refreshed_columns:
+                    logger.exception(
+                        "Failed adding column '%s' to transaction_templates",
+                        column_name,
                     )
-                    self.db.commit()
-                except Exception:
-                    self.db.rollback()
-                    refreshed_columns = {
-                        column["name"]
-                        for column in inspect(bind).get_columns("transaction_templates")
-                    }
-                    if "claim_limit_mode" not in refreshed_columns:
-                        logger.exception(
-                            "Failed adding claim_limit_mode column to transaction_templates"
-                        )
-                        raise
+                    raise
+
+        if "transaction_templates" in inspector.get_table_names():
+            ensure_column(
+                "qr_enabled",
+                "ALTER TABLE transaction_templates "
+                "ADD COLUMN qr_enabled BOOLEAN NOT NULL DEFAULT false",
+            )
+            ensure_column(
+                "points_mode",
+                "ALTER TABLE transaction_templates "
+                "ADD COLUMN points_mode VARCHAR(32) NOT NULL DEFAULT 'automatic'",
+            )
+            ensure_column(
+                "claim_limit_mode",
+                "ALTER TABLE transaction_templates "
+                "ADD COLUMN claim_limit_mode VARCHAR(32) NOT NULL DEFAULT 'per_user'",
+            )
 
         TransactionTemplateQrClaim.__table__.create(bind=bind, checkfirst=True)
         TransactionTemplateService._schema_ready = True
