@@ -53,6 +53,7 @@ export default function TemplateQrClaimPage({
 }) {
   const successTimeoutMs = Number(success_timeout_ms) > 0 ? Number(success_timeout_ms) : 1500;
 
+  const [scannerEnabled, setScannerEnabled] = useState(false);
   const [isScannerActive, setIsScannerActive] = useState(false);
   const [isClaiming, setIsClaiming] = useState(false);
   const [error, setError] = useState(null);
@@ -169,7 +170,12 @@ export default function TemplateQrClaimPage({
   }, []);
 
   const startScanner = useCallback(async () => {
-    if (scanIntervalRef.current || streamRef.current || claimInProgressRef.current) {
+    if (
+      !scannerEnabled ||
+      scanIntervalRef.current ||
+      streamRef.current ||
+      claimInProgressRef.current
+    ) {
       return;
     }
 
@@ -290,17 +296,17 @@ export default function TemplateQrClaimPage({
     successTimeoutMs,
     supportsBarcodeDetector,
     supportsLiveScanning,
+    scannerEnabled,
   ]);
 
   useEffect(() => {
-    void startScanner();
     return () => {
       if (resumeTimeoutRef.current) {
         window.clearTimeout(resumeTimeoutRef.current);
       }
       stopScanner();
     };
-  }, [startScanner, stopScanner]);
+  }, [stopScanner]);
 
   return (
     <section className="card bg-base-100 border border-base-300 shadow-md">
@@ -320,6 +326,48 @@ export default function TemplateQrClaimPage({
           />
         </div>
 
+        <div className="flex flex-wrap gap-2">
+          {!scannerEnabled ? (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                setError(null);
+                setSuccessMessage("");
+                setScannerEnabled(true);
+                void startScanner();
+              }}
+            >
+              Activate QR scanner
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => {
+                  setScannerEnabled(false);
+                  stopScanner();
+                }}
+              >
+                Stop scanner
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  setError(null);
+                  setSuccessMessage("");
+                  void startScanner();
+                }}
+                disabled={isScannerActive || isClaiming}
+              >
+                Restart scanner
+              </button>
+            </>
+          )}
+        </div>
+
         {isClaiming ? <div className="alert alert-info text-sm">Claiming points...</div> : null}
         {successMessage ? <div className="alert alert-success text-sm">{successMessage}</div> : null}
         {error ? <div className="alert alert-error text-sm">{error}</div> : null}
@@ -331,7 +379,7 @@ export default function TemplateQrClaimPage({
         ) : null}
 
         <div className="text-xs text-base-content/60">
-          Scanner status: {isScannerActive ? "active" : "initializing"}
+          Scanner status: {!scannerEnabled ? "inactive" : isScannerActive ? "active" : "starting"}
         </div>
       </div>
     </section>
