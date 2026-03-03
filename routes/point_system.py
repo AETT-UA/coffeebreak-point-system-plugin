@@ -21,7 +21,7 @@ from ..services.point_system_service import (
     UserIdMappingError,
 )
 from ..services.transaction_template_service import TransactionTemplateService
-from coffeebreak.dependencies.auth import check_role
+from coffeebreak.dependencies.auth import check_role, get_current_user
 
 logger = logging.getLogger("coffeebreak.point_system")
 
@@ -312,6 +312,7 @@ async def add_activity_points(
     activity_id: int = Path(..., description="Activity identifier"),
     payload: Optional[ActivityAwardRequest] = Body(None),
     db: Session = Depends(get_db),
+    user_info: dict = Depends(get_current_user()),
 ):
     """
     Add activity participation points to a user using the configured activity template.
@@ -331,10 +332,25 @@ async def add_activity_points(
                 ),
             )
 
+        executable_templates = [
+            template
+            for template in templates
+            if template_service.can_execute_template(template.id, user_info, ROLE)
+        ]
+
+        if len(executable_templates) == 0:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Access denied for activity {activity_id}. "
+                    "You need manage_transaction_templates role or template ACL permission."
+                ),
+            )
+
         template: Optional[object] = None
 
-        if len(templates) == 1:
-            template = templates[0]
+        if len(executable_templates) == 1:
+            template = executable_templates[0]
         else:
             # Multiple templates exist; require explicit selection
             requested_template_id = (
@@ -347,17 +363,26 @@ async def add_activity_points(
                 raise HTTPException(
                     status_code=409,
                     detail=(
-                        f"Multiple transaction templates configured for activity {activity_id}. "
+                        f"Multiple accessible transaction templates configured for activity {activity_id}. "
                         "Specify template_id to choose which one to use."
                     ),
                 )
 
-            for candidate in templates:
+            for candidate in executable_templates:
                 if int(candidate.id) == requested_template_id:
                     template = candidate
                     break
 
             if template is None:
+                if any(
+                    int(candidate.id) == requested_template_id
+                    for candidate in templates
+                ):
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"Access denied for template {requested_template_id}.",
+                    )
+
                 raise HTTPException(
                     status_code=404,
                     detail=(
