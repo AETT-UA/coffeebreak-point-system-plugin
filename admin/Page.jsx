@@ -17,7 +17,7 @@ const USERS_URL = `${baseUrl}/users/`;
 const ROLES_URL = `${baseUrl}/users/roles/`;
 const ACTIVITIES_URL = `${baseUrl}/activities/`;
 const TRANSACTION_PAGE_SIZE_OPTIONS = [10, 25, 50];
-const DEFAULT_TRANSACTION_PAGE_SIZE = 25;
+const DEFAULT_TRANSACTION_PAGE_SIZE = 10;
 const LEADERBOARD_PAGE_SIZE_OPTIONS = [10, 25, 50];
 const DEFAULT_LEADERBOARD_PAGE_SIZE = 25;
 
@@ -34,6 +34,71 @@ function formatTimestamp(value) {
     return "-";
   }
   return new Date(value).toLocaleString();
+}
+
+function parseIntegerIdentifier(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) {
+    return null;
+  }
+
+  return String(parsed);
+}
+
+function buildUserLabelData(user) {
+  const firstName = String(user?.firstName || "").trim();
+  const lastName = String(user?.lastName || "").trim();
+  const username = String(user?.username || "").trim();
+  const email = String(user?.email || "").trim();
+  const fullName = `${firstName} ${lastName}`.trim();
+
+  const displayName = fullName || username || email || "Unknown user";
+  const label = fullName && username ? `${fullName} (${username})` : displayName;
+  const searchText = [displayName, fullName, username, email, label]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return {
+    displayName,
+    label,
+    searchText,
+  };
+}
+
+function extractPointSystemAliases(user) {
+  const aliases = new Set();
+
+  const addAlias = (value) => {
+    if (Array.isArray(value)) {
+      value.forEach(addAlias);
+      return;
+    }
+
+    const parsed = parseIntegerIdentifier(value);
+    if (parsed !== null) {
+      aliases.add(parsed);
+    }
+  };
+
+  addAlias(user?.coffeebreak_id);
+  addAlias(user?.coffeebreakId);
+  addAlias(user?.point_system_user_id);
+  addAlias(user?.pointSystemUserId);
+
+  const attributes = user?.attributes;
+  if (attributes && typeof attributes === "object") {
+    addAlias(attributes.coffeebreak_id);
+    addAlias(attributes.coffeebreakId);
+    addAlias(attributes.point_system_user_id);
+    addAlias(attributes.pointSystemUserId);
+  }
+
+  return Array.from(aliases);
 }
 
 function Panel({ title, subtitle, actions, children }) {
@@ -88,6 +153,38 @@ function UserSelectField({
   required = false,
   allowEmpty = true,
 }) {
+  const [search, setSearch] = useState("");
+
+  const filteredUsers = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    if (!needle) {
+      return users;
+    }
+
+    return users.filter((user) => {
+      const haystack = String(user.searchText || user.label || "").toLowerCase();
+      return haystack.includes(needle);
+    });
+  }, [users, search]);
+
+  const visibleUsers = useMemo(() => {
+    const selectedId = String(value || "");
+    if (!selectedId) {
+      return filteredUsers;
+    }
+
+    if (filteredUsers.some((user) => String(user.id) === selectedId)) {
+      return filteredUsers;
+    }
+
+    const selected = users.find((user) => String(user.id) === selectedId);
+    if (!selected) {
+      return filteredUsers;
+    }
+
+    return [selected, ...filteredUsers];
+  }, [filteredUsers, users, value]);
+
   if (!users.length) {
     return (
       <input
@@ -102,14 +199,33 @@ function UserSelectField({
   }
 
   return (
-    <select className="select select-bordered select-sm w-full" value={value} onChange={onChange} required={required}>
-      {allowEmpty ? <option value="">{placeholder}</option> : null}
-      {users.map((user) => (
-        <option key={user.id} value={user.id}>
-          {user.label}
-        </option>
-      ))}
-    </select>
+    <div className="space-y-1">
+      <input
+        className="input input-bordered input-sm w-full"
+        type="search"
+        placeholder="Search by name"
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+      />
+
+      <select
+        className="select select-bordered select-sm w-full"
+        value={value}
+        onChange={onChange}
+        required={required}
+      >
+        {allowEmpty ? <option value="">{placeholder}</option> : null}
+        {visibleUsers.map((user) => (
+          <option key={user.id} value={user.id}>
+            {user.label}
+          </option>
+        ))}
+      </select>
+
+      {search.trim() && visibleUsers.length === 0 ? (
+        <p className="text-xs text-base-content/60">No users match that name.</p>
+      ) : null}
+    </div>
   );
 }
 
@@ -681,6 +797,7 @@ function TransactionLogsPanel({
   onPreviousPage,
   onNextPage,
   onPageSizeChange,
+  resolveUserLabel,
 }) {
   return (
     <Panel
@@ -756,7 +873,7 @@ function TransactionLogsPanel({
               {transactions.map((transaction) => (
                 <tr key={transaction.id}>
                   <td>{transaction.id}</td>
-                  <td className="font-medium">{transaction.user_id}</td>
+                  <td className="font-medium">{resolveUserLabel(transaction.user_id)}</td>
                   <td className={transaction.points < 0 ? "text-error" : "text-success"}>{transaction.points}</td>
                   <td>
                     <span className="badge badge-outline badge-sm">{transaction.transaction_type}</span>
@@ -787,6 +904,7 @@ function LeaderboardPanel({
   onPreviousPage,
   onNextPage,
   onPageSizeChange,
+  resolveUserLabel,
 }) {
   return (
     <Panel
@@ -862,7 +980,7 @@ function LeaderboardPanel({
               {entries.map((entry, index) => (
                 <tr key={entry.id} className={rankOffset + index < 3 ? "font-semibold" : ""}>
                   <td>{rankOffset + index + 1}</td>
-                  <td>{entry.id}</td>
+                  <td>{resolveUserLabel(entry.id)}</td>
                   <td>{entry.points}</td>
                 </tr>
               ))}
@@ -885,6 +1003,7 @@ function TemplatesSection({
   roles,
   loading,
   refreshTemplates,
+  resolveUserLabel,
 }) {
   const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
@@ -1238,7 +1357,7 @@ function TemplatesSection({
                 ) : (
                   permissions.user_subs.map((userSub) => (
                     <div key={userSub} className="flex items-center justify-between gap-2 border border-base-300 rounded-lg p-2">
-                      <span className="text-sm truncate">{userSub}</span>
+                      <span className="text-sm truncate">{resolveUserLabel(userSub)}</span>
                       <button className="btn btn-ghost btn-xs text-error" onClick={() => removeUserPermission(userSub)}>
                         Remove
                       </button>
@@ -1350,59 +1469,119 @@ export default function PointSystemAdminPage() {
   const [leaderboardPage, setLeaderboardPage] = useState(0);
   const [leaderboardPageSize, setLeaderboardPageSize] = useState(DEFAULT_LEADERBOARD_PAGE_SIZE);
 
-  const userOptions = useMemo(() => {
+  const userLabelDataById = useMemo(() => {
     const mapped = new Map();
 
     users.forEach((user) => {
-      if (!user?.id) {
+      const userId = String(user?.id || "").trim();
+      if (!userId) {
         return;
       }
-      const firstName = String(user.firstName || "").trim();
-      const lastName = String(user.lastName || "").trim();
-      const username = String(user.username || "").trim();
-      const email = String(user.email || "").trim();
-      const fullName = `${firstName} ${lastName}`.trim();
-      let label = "";
-      if (fullName && username) {
-        label = `${fullName} (${username})`;
-      } else if (fullName) {
-        label = fullName;
-      } else if (username) {
-        label = username;
-      } else if (email) {
-        label = email;
-      } else {
-        label = String(user.id);
-      }
 
-      mapped.set(String(user.id), {
-        id: String(user.id),
-        label,
+      const labelData = buildUserLabelData(user);
+      const searchable = `${labelData.searchText} ${userId}`.trim();
+      mapped.set(userId, {
+        label: labelData.label,
+        displayName: labelData.displayName,
+        searchText: searchable,
+      });
+
+      extractPointSystemAliases(user).forEach((aliasId) => {
+        if (!mapped.has(aliasId)) {
+          mapped.set(aliasId, {
+            label: labelData.label,
+            displayName: labelData.displayName,
+            searchText: `${searchable} ${aliasId}`.trim(),
+          });
+        }
       });
     });
 
-    transactions.forEach((transaction) => {
-      if (!transaction?.user_id) {
+    leaderboardEntries.forEach((entry) => {
+      const userId = String(entry?.id || "").trim();
+      if (!userId || mapped.has(userId)) {
         return;
       }
-      const userId = String(transaction.user_id);
-      if (!mapped.has(userId)) {
-        mapped.set(userId, { id: userId, label: userId });
+
+      const entryName = String(entry?.name || entry?.username || "").trim();
+      if (!entryName) {
+        return;
       }
+
+      mapped.set(userId, {
+        label: entryName,
+        displayName: entryName,
+        searchText: `${entryName} ${userId}`.toLowerCase(),
+      });
+    });
+
+    return mapped;
+  }, [users, leaderboardEntries]);
+
+  const userOptions = useMemo(() => {
+    const mapped = new Map();
+
+    const addOption = (candidateId) => {
+      const id = String(candidateId || "").trim();
+      if (!id || mapped.has(id)) {
+        return;
+      }
+
+      const labelData = userLabelDataById.get(id);
+      if (labelData) {
+        mapped.set(id, {
+          id,
+          label: labelData.label,
+          searchText: labelData.searchText,
+        });
+        return;
+      }
+
+      mapped.set(id, {
+        id,
+        label: "Unknown user",
+        searchText: `unknown user ${id}`.toLowerCase(),
+      });
+    };
+
+    users.forEach((user) => {
+      addOption(user?.id);
+    });
+
+    transactions.forEach((transaction) => {
+      addOption(transaction?.user_id);
     });
 
     leaderboardEntries.forEach((entry) => {
-      if (!entry?.id) {
-        return;
-      }
-      const userId = String(entry.id);
-      if (!mapped.has(userId)) {
-        mapped.set(userId, { id: userId, label: userId });
-      }
+      addOption(entry?.id);
     });
 
-    return Array.from(mapped.values()).sort((a, b) => a.label.localeCompare(b.label));
-  }, [users, transactions, leaderboardEntries]);
+    return Array.from(mapped.values()).sort(
+      (left, right) => left.label.localeCompare(right.label) || left.id.localeCompare(right.id)
+    );
+  }, [users, transactions, leaderboardEntries, userLabelDataById]);
+
+  const userLabelById = useMemo(() => {
+    const mapped = new Map();
+    userOptions.forEach((userOption) => {
+      mapped.set(userOption.id, userOption.label);
+    });
+    return mapped;
+  }, [userOptions]);
+
+  const resolveUserLabel = (candidateId) => {
+    const id = String(candidateId || "").trim();
+    if (!id) {
+      return "Unknown user";
+    }
+
+    const fromOptions = userLabelById.get(id);
+    if (fromOptions) {
+      return fromOptions;
+    }
+
+    return userLabelDataById.get(id)?.label || "Unknown user";
+  };
 
   const roleOptions = useMemo(() => {
     return (Array.isArray(roles) ? roles : [])
@@ -1746,6 +1925,7 @@ export default function PointSystemAdminPage() {
                 setTransactionPage((current) => (hasNextTransactionPage ? current + 1 : current))
               }
               onPageSizeChange={handleTransactionPageSizeChange}
+              resolveUserLabel={resolveUserLabel}
             />
 
             <LeaderboardPanel
@@ -1763,6 +1943,7 @@ export default function PointSystemAdminPage() {
                 setLeaderboardPage((current) => (hasNextLeaderboardPage ? current + 1 : current))
               }
               onPageSizeChange={handleLeaderboardPageSizeChange}
+              resolveUserLabel={resolveUserLabel}
             />
           </div>
         </Panel>
@@ -1777,6 +1958,7 @@ export default function PointSystemAdminPage() {
           roles={roleOptions}
           loading={templatesLoading}
           refreshTemplates={fetchTemplates}
+          resolveUserLabel={resolveUserLabel}
         />
       </div>
     </div>
