@@ -53,6 +53,26 @@ function getCameraErrorMessage(error) {
   return getErrorMessage(error, "Could not start camera. Check browser permissions and HTTPS.");
 }
 
+function buildNoZoomViewportContent(originalContent) {
+  const segments = String(originalContent || "")
+    .split(",")
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .filter(
+      (segment) =>
+        !segment.startsWith("initial-scale") &&
+        !segment.startsWith("minimum-scale") &&
+        !segment.startsWith("maximum-scale") &&
+        !segment.startsWith("user-scalable")
+    );
+
+  if (!segments.some((segment) => segment.startsWith("width="))) {
+    segments.unshift("width=device-width");
+  }
+
+  return [...segments, "initial-scale=1", "maximum-scale=1", "user-scalable=no"].join(", ");
+}
+
 export default function StaffPage({ title = "Staff QR Scanner" }) {
   const { activities = [], loading: activitiesLoading, error: activitiesError } = useActivity();
 
@@ -518,6 +538,55 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
 
     void startScanner();
   }, [startScanner, step, stopScanner]);
+
+  useEffect(() => {
+    if (!isBrowser) {
+      return undefined;
+    }
+
+    const viewportMeta = document.querySelector('meta[name="viewport"]');
+    if (!viewportMeta) {
+      return undefined;
+    }
+
+    const originalViewportContent = viewportMeta.getAttribute("content") || "width=device-width, initial-scale=1";
+    viewportMeta.setAttribute("content", buildNoZoomViewportContent(originalViewportContent));
+
+    let lastTouchEnd = 0;
+
+    const preventGestureZoom = (event) => {
+      event.preventDefault();
+    };
+
+    const preventMultiTouchZoom = (event) => {
+      if (event.touches && event.touches.length > 1) {
+        event.preventDefault();
+      }
+    };
+
+    const preventDoubleTapZoom = (event) => {
+      const now = Date.now();
+      if (now - lastTouchEnd <= 300) {
+        event.preventDefault();
+      }
+      lastTouchEnd = now;
+    };
+
+    document.addEventListener("gesturestart", preventGestureZoom);
+    document.addEventListener("gesturechange", preventGestureZoom);
+    document.addEventListener("gestureend", preventGestureZoom);
+    document.addEventListener("touchmove", preventMultiTouchZoom, { passive: false });
+    document.addEventListener("touchend", preventDoubleTapZoom, { passive: false });
+
+    return () => {
+      document.removeEventListener("gesturestart", preventGestureZoom);
+      document.removeEventListener("gesturechange", preventGestureZoom);
+      document.removeEventListener("gestureend", preventGestureZoom);
+      document.removeEventListener("touchmove", preventMultiTouchZoom);
+      document.removeEventListener("touchend", preventDoubleTapZoom);
+      viewportMeta.setAttribute("content", originalViewportContent);
+    };
+  }, [isBrowser]);
 
   useEffect(() => {
     if (step !== STEP_SUCCESS) {

@@ -47,7 +47,7 @@ export default function ScannerStep({
 
         <video
           ref={videoRef}
-          className="w-full rounded-lg border border-base-300 bg-black/90"
+          className="w-full rounded-lg border border-base-300 bg-black/90 touch-none"
           playsInline
           muted
           autoPlay
