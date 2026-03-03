@@ -94,7 +94,7 @@ async def health_check():
 @router.get("/transactions", response_model=List[Transaction])
 async def list_transactions(
     activity_id: Optional[int] = Query(None, description="Filter by activity"),
-    user_id: Optional[int] = Query(None, description="Filter by user"),
+    user_id: Optional[str] = Query(None, description="Filter by user"),
     transaction_type: Optional[str] = Query(
         None, description="Filter by type (manual, activity)"
     ),
@@ -110,6 +110,8 @@ async def list_transactions(
             skip=skip,
             limit=limit,
         )
+    except UserIdMappingError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except PointSystemUnavailable as e:
         raise HTTPException(status_code=502, detail=str(e))
     except UpstreamPointSystemError as e:

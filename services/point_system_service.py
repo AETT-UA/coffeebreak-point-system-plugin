@@ -279,8 +279,10 @@ class PointSystemService:
                     continue
 
                 resolved[external_id] = {
-                    "name": cls._display_name_from_user(user, fallback=str(external_id)),
-                    "username": user.get("username") or user.get("email")
+                    "name": cls._display_name_from_user(
+                        user, fallback=str(external_id)
+                    ),
+                    "username": user.get("username") or user.get("email"),
                 }
         except Exception as e:
             logger.warning(f"Failed to build external user id -> name map: {e}")
@@ -358,7 +360,7 @@ class PointSystemService:
                 id=user_id,
                 name=data_by_id.get(user_id, {}).get("name", user_id),
                 username=data_by_id.get(user_id, {}).get("username"),
-                points=points
+                points=points,
             )
             for user_id, points in raw_entries
         ]
@@ -379,7 +381,7 @@ class PointSystemService:
         async def list(
             cls,
             activity_id: Optional[int] = None,
-            user_id: Optional[int] = None,
+            user_id: Optional[str] = None,
             transaction_type: Optional[str] = None,
             skip: int = 0,
             limit: int = 50,
@@ -391,36 +393,76 @@ class PointSystemService:
                     if activity_id is not None:
                         params["activity_id"] = activity_id
                     if user_id is not None:
-                        params["user_id"] = user_id
+                        normalized_user_id = str(user_id).strip()
+                        parsed_user_id = service._parse_int(normalized_user_id)
+                        if parsed_user_id is None:
+                            parsed_user_id = await service._resolve_external_user_id(
+                                normalized_user_id
+                            )
+                        params["user_id"] = parsed_user_id
                     if transaction_type is not None:
                         params["transaction_type"] = transaction_type
                     data = await service._make_request(
                         "GET", "/points/transactions", params=params
                     )
-                    results = []
+
+                    parsed_transactions = []
                     for tx_data in data:
                         try:
-                            results.append(
-                                Transaction(
-                                    id=int(tx_data["id"]),
-                                    activity_id=int(tx_data["activity_id"])
+                            parsed_transactions.append(
+                                {
+                                    "id": int(tx_data["id"]),
+                                    "activity_id": int(tx_data["activity_id"])
                                     if tx_data.get("activity_id") is not None
                                     else None,
-                                    user_id=str(tx_data["user_id"]),
-                                    issued_by_id=str(tx_data["issued_by_id"])
+                                    "user_id": str(tx_data["user_id"]),
+                                    "issued_by_id": str(tx_data["issued_by_id"])
                                     if tx_data.get("issued_by_id") is not None
                                     else None,
-                                    points=float(tx_data["points"]),
-                                    transaction_type=TransactionType(
+                                    "points": service._round_points(tx_data["points"]),
+                                    "transaction_type": TransactionType(
                                         tx_data["transaction_type"]
                                     ),
-                                    description=tx_data.get("description"),
-                                    created_at=tx_data["created_at"],
-                                )
+                                    "description": tx_data.get("description"),
+                                    "created_at": tx_data["created_at"],
+                                }
                             )
                         except (ValueError, TypeError, KeyError):
                             continue
-                    return results
+
+                    if not parsed_transactions:
+                        return []
+
+                    unique_user_ids = list(
+                        dict.fromkeys(tx["user_id"] for tx in parsed_transactions)
+                    )
+                    resolved_data = await asyncio.gather(
+                        *(
+                            PointSystemService._get_user_data(user_id)
+                            for user_id in unique_user_ids
+                        )
+                    )
+                    user_data_by_id = dict(zip(unique_user_ids, resolved_data))
+
+                    return [
+                        Transaction(
+                            id=tx["id"],
+                            activity_id=tx["activity_id"],
+                            user_id=tx["user_id"],
+                            user_name=user_data_by_id.get(tx["user_id"], {}).get(
+                                "name"
+                            ),
+                            user_username=user_data_by_id.get(tx["user_id"], {}).get(
+                                "username"
+                            ),
+                            issued_by_id=tx["issued_by_id"],
+                            points=tx["points"],
+                            transaction_type=tx["transaction_type"],
+                            description=tx["description"],
+                            created_at=tx["created_at"],
+                        )
+                        for tx in parsed_transactions
+                    ]
             except Exception as e:
                 logger.error(f"Failed to list transactions: {e}")
                 raise
@@ -586,6 +628,8 @@ class PointSystemService:
                                     id=tx_id,
                                     activity_id=tx_activity_id,
                                     user_id=tx_user_id,
+                                    user_name=None,
+                                    user_username=None,
                                     issued_by_id=tx_issued_by_id,
                                     points=tx_points,
                                     transaction_type=TransactionType(
@@ -695,6 +739,8 @@ class PointSystemService:
                             if data.get("activity_id") is not None
                             else None,
                             user_id=returned_user_id,
+                            user_name=None,
+                            user_username=None,
                             issued_by_id=str(data["issued_by_id"])
                             if data.get("issued_by_id") is not None
                             else None,

@@ -1515,8 +1515,34 @@ export default function PointSystemAdminPage() {
       });
     });
 
+    transactions.forEach((transaction) => {
+      const userId = String(transaction?.user_id || "").trim();
+      if (!userId) {
+        return;
+      }
+
+      const resolvedName = String(transaction?.user_name || "").trim();
+      const resolvedUsername = String(transaction?.user_username || "").trim();
+      const fallbackName = resolvedName || resolvedUsername;
+      if (!fallbackName) {
+        return;
+      }
+
+      const label = resolvedName && resolvedUsername ? `${resolvedName} (${resolvedUsername})` : fallbackName;
+      const existing = mapped.get(userId);
+      if (existing && existing.label && existing.label !== "Unknown user") {
+        return;
+      }
+
+      mapped.set(userId, {
+        label,
+        displayName: resolvedName || resolvedUsername,
+        searchText: `${label} ${resolvedName} ${resolvedUsername} ${userId}`.toLowerCase(),
+      });
+    });
+
     return mapped;
-  }, [users, leaderboardEntries]);
+  }, [users, leaderboardEntries, transactions]);
 
   const userOptions = useMemo(() => {
     const mapped = new Map();
@@ -1597,11 +1623,27 @@ export default function PointSystemAdminPage() {
   }, [roles]);
 
   const filteredLeaderboardEntries = useMemo(() => {
-    if (!userFilter.trim()) {
+    const normalizedFilter = String(userFilter || "").trim();
+    if (!normalizedFilter) {
       return leaderboardEntries;
     }
-    return leaderboardEntries.filter((entry) => String(entry.id) === userFilter.trim());
-  }, [leaderboardEntries, userFilter]);
+
+    const directMatch = leaderboardEntries.filter(
+      (entry) => String(entry.id || "").trim() === normalizedFilter
+    );
+    if (directMatch.length > 0) {
+      return directMatch;
+    }
+
+    const selectedLabel = resolveUserLabel(normalizedFilter);
+    if (!selectedLabel || selectedLabel === "Unknown user") {
+      return [];
+    }
+
+    return leaderboardEntries.filter(
+      (entry) => resolveUserLabel(entry.id) === selectedLabel
+    );
+  }, [leaderboardEntries, userFilter, resolveUserLabel]);
 
   const leaderboardTotalEntries = filteredLeaderboardEntries.length;
   const leaderboardTotalPages = Math.max(1, Math.ceil(leaderboardTotalEntries / leaderboardPageSize));

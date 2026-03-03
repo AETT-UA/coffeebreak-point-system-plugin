@@ -36,6 +36,12 @@ class Transaction(BaseModel):
     user_id: str = Field(
         ..., description="ID of the user associated with the transaction"
     )
+    user_name: Optional[str] = Field(
+        None, description="Display name resolved for the transaction user"
+    )
+    user_username: Optional[str] = Field(
+        None, description="Username/email resolved for the transaction user"
+    )
     issued_by_id: Optional[str] = Field(None, description="ID")
     points: int = Field(..., description="Points associated with the transaction")
     transaction_type: TransactionType = Field(
