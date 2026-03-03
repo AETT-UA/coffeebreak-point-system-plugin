@@ -331,16 +331,39 @@ async def add_activity_points(
                 ),
             )
 
-        if len(templates) > 1:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Multiple transaction templates configured for activity {activity_id}. "
-                    "Keep exactly one template per activity."
-                ),
+        template: Optional[object] = None
+
+        if len(templates) == 1:
+            template = templates[0]
+        else:
+            # Multiple templates exist; require explicit selection
+            requested_template_id = (
+                int(payload.template_id)
+                if payload is not None and payload.template_id is not None
+                else None
             )
 
-        template = templates[0]
+            if requested_template_id is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Multiple transaction templates configured for activity {activity_id}. "
+                        "Specify template_id to choose which one to use."
+                    ),
+                )
+
+            for candidate in templates:
+                if int(candidate.id) == requested_template_id:
+                    template = candidate
+                    break
+
+            if template is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        f"Template {requested_template_id} not found for activity {activity_id}."
+                    ),
+                )
         points_mode = str(
             getattr(template, "points_mode", "automatic") or "automatic"
         ).lower()

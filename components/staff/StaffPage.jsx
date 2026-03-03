@@ -94,7 +94,6 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
 
   const [selectedActivityId, setSelectedActivityId] = useState("");
   const [templatesByActivity, setTemplatesByActivity] = useState({});
-  const [duplicateActivityIds, setDuplicateActivityIds] = useState([]);
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
   const [templatesError, setTemplatesError] = useState(null);
 
@@ -195,34 +194,44 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
       }
 
       const templates = templatesByActivity[activityId];
-      if (!Array.isArray(templates) || templates.length !== 1) {
+      if (!Array.isArray(templates) || templates.length === 0) {
         continue;
       }
 
-      const template = templates[0];
-      const label =
+      const activityLabel =
         typeof activity?.name === "string" && activity.name.trim() ? activity.name.trim() : null;
-
-      if (!label) {
+      if (!activityLabel) {
         continue;
       }
 
-      const pointsMode =
-        typeof template.points_mode === "string" && template.points_mode.trim()
-          ? template.points_mode.trim().toLowerCase()
-          : "automatic";
+      for (const template of templates) {
+        const pointsMode =
+          typeof template.points_mode === "string" && template.points_mode.trim()
+            ? template.points_mode.trim().toLowerCase()
+            : "automatic";
 
-      if (!["automatic", "manual"].includes(pointsMode)) {
-        continue;
+        if (!["automatic", "manual"].includes(pointsMode)) {
+          continue;
+        }
+
+        const templateId = Number(template.id);
+        if (!Number.isInteger(templateId)) {
+          continue;
+        }
+
+        const optionLabel = template.name
+          ? `${activityLabel} — ${template.name}`
+          : `${activityLabel} — template ${templateId}`;
+
+        options.push({
+          id: activityId,
+          name: optionLabel,
+          points: Number(template.points ?? 0),
+          pointsMode,
+          templateName: template.name,
+          templateId,
+        });
       }
-
-      options.push({
-        id: activityId,
-        name: label,
-        points: Number(template.points ?? 0),
-        pointsMode,
-        templateName: template.name,
-      });
     }
 
     options.sort((left, right) => left.name.localeCompare(right.name));
@@ -230,7 +239,11 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
   }, [activities, templatesByActivity]);
 
   const selectedActivity = useMemo(() => {
-    return activityOptions.find((activity) => String(activity.id) === selectedActivityId) || null;
+    return (
+      activityOptions.find(
+        (activity) => `${activity.id}:${activity.templateId}` === selectedActivityId
+      ) || null
+    );
   }, [activityOptions, selectedActivityId]);
 
   const stopScanner = useCallback(() => {
@@ -316,11 +329,18 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
 
   const submitActivityAward = useCallback(
     async (userId, manualPoints = null) => {
-      const activityId = Number(selectedActivityId);
-      if (!Number.isInteger(activityId) || !selectedActivity) {
-        setFlowError("Select an activity before scanning a QR code.");
-        return;
-      }
+       const [activityIdRaw, templateIdRaw] = selectedActivityId.split(":");
+       const activityId = Number(activityIdRaw);
+       const templateId = Number(templateIdRaw);
+
+       if (
+         !Number.isInteger(activityId) ||
+         !Number.isInteger(templateId) ||
+         !selectedActivity
+       ) {
+         setFlowError("Select an activity before scanning a QR code.");
+         return;
+       }
 
       const pointsMode = selectedActivity.pointsMode === "manual" ? "manual" : "automatic";
       let requestBody = {};
@@ -340,7 +360,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
         const api = getApi();
         const response = await api.post(
           `/coffeebreak-point-system-plugin/point-system/points/${encodeURIComponent(userId)}/add-activity/${activityId}`,
-          requestBody
+          { ...requestBody, template_id: templateId }
         );
 
         const awardedPoints = Number(response?.data?.awarded_points ?? selectedActivity.points ?? 0);
@@ -626,11 +646,6 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
         }
 
         setTemplatesByActivity(grouped);
-        setDuplicateActivityIds(
-          Object.entries(grouped)
-            .filter(([, list]) => Array.isArray(list) && list.length > 1)
-            .map(([activityId]) => Number(activityId))
-        );
       } catch (error) {
         setTemplatesError(getErrorMessage(error, "Failed to load activity point templates."));
       } finally {
@@ -760,7 +775,6 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
             isLoadingTemplates={isLoadingTemplates}
             activitiesLoading={activitiesLoading}
             selectedActivity={selectedActivity}
-            duplicateActivityIds={duplicateActivityIds}
             templatesError={templatesError}
             activitiesError={activitiesError}
             onChangeActivity={setSelectedActivityId}

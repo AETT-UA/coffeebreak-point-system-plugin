@@ -81,3 +81,10 @@ class ActivityAwardRequest(BaseModel):
             "Required only for activity templates configured with manual points_mode."
         ),
     )
+    template_id: Optional[int] = Field(
+        None,
+        description=(
+            "Optional template id when multiple templates exist for an activity. "
+            "Required if the activity has more than one template configured."
+        ),
+    )
