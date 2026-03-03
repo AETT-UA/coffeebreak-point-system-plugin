@@ -25,7 +25,7 @@ export default function ActivitySelectionStep({
           >
             <option value="">Choose an activity</option>
             {activityOptions.map((activity) => (
-              <option key={activity.id} value={String(activity.id)}>
+              <option key={`${activity.id}:${activity.templateId}`} value={`${activity.id}:${activity.templateId}`}>
                 {activity.name} -
                 {activity.pointsMode === "manual"
                   ? " manual points input"
@@ -84,6 +84,7 @@ ActivitySelectionStep.propTypes = {
       points: PropTypes.number.isRequired,
       pointsMode: PropTypes.string.isRequired,
       templateName: PropTypes.string,
+      templateId: PropTypes.number.isRequired,
     })
   ).isRequired,
   isLoadingTemplates: PropTypes.bool.isRequired,
