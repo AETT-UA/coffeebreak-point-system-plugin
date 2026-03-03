@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -8,6 +8,9 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 class PointsMode(str, Enum):
     AUTOMATIC = "automatic"
     MANUAL = "manual"
+
+
+ClaimLimitMode = Literal["per_user", "overall"]
 
 
 class Base(BaseModel):
@@ -31,7 +34,10 @@ class Base(BaseModel):
     )
     description: Optional[str] = Field(None, description="Template description")
     claim_limit: Optional[int] = Field(
-        0, description="Max claims allowed (0 = unlimited)"
+        0, ge=0, description="Max claims allowed (0 = unlimited)"
+    )
+    claim_limit_mode: ClaimLimitMode = Field(
+        "per_user", description="Claim limit scope: per user or overall"
     )
 
     @model_validator(mode="after")
@@ -50,7 +56,8 @@ class Update(BaseModel):
     points: Optional[int] = Field(None)
     points_mode: Optional[PointsMode] = Field(None)
     description: Optional[str] = Field(None)
-    claim_limit: Optional[int] = Field(None)
+    claim_limit: Optional[int] = Field(None, ge=0)
+    claim_limit_mode: Optional[ClaimLimitMode] = Field(None)
 
 
 class Response(Base):

@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
+import logging
 from typing import List, Optional
 
 from coffeebreak.utils.api import HTTPException
+from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -14,9 +16,66 @@ from ..models.transaction_template_permission import (
 from ..schemas import transaction_template as tp
 
 
+logger = logging.getLogger("coffeebreak.point_system")
+
+
 class TransactionTemplateService:
+    _schema_ready = False
+
     def __init__(self, db: Session):
         self.db: Session = db
+        self._ensure_schema()
+
+    def _ensure_schema(self) -> None:
+        if TransactionTemplateService._schema_ready:
+            return
+
+        bind = self.db.get_bind()
+        inspector = inspect(bind)
+
+        def ensure_column(column_name: str, ddl: str) -> None:
+            current_columns = {
+                column["name"]
+                for column in inspect(bind).get_columns("transaction_templates")
+            }
+            if column_name in current_columns:
+                return
+
+            try:
+                self.db.execute(text(ddl))
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                refreshed_columns = {
+                    column["name"]
+                    for column in inspect(bind).get_columns("transaction_templates")
+                }
+                if column_name not in refreshed_columns:
+                    logger.exception(
+                        "Failed adding column '%s' to transaction_templates",
+                        column_name,
+                    )
+                    raise
+
+        if "transaction_templates" in inspector.get_table_names():
+            ensure_column(
+                "qr_enabled",
+                "ALTER TABLE transaction_templates "
+                "ADD COLUMN qr_enabled BOOLEAN NOT NULL DEFAULT false",
+            )
+            ensure_column(
+                "points_mode",
+                "ALTER TABLE transaction_templates "
+                "ADD COLUMN points_mode VARCHAR(32) NOT NULL DEFAULT 'automatic'",
+            )
+            ensure_column(
+                "claim_limit_mode",
+                "ALTER TABLE transaction_templates "
+                "ADD COLUMN claim_limit_mode VARCHAR(32) NOT NULL DEFAULT 'per_user'",
+            )
+
+        TransactionTemplateQrClaim.__table__.create(bind=bind, checkfirst=True)
+        TransactionTemplateService._schema_ready = True
 
     def _active_query(self):
         return self.db.query(TransactionTemplate).filter(
@@ -39,6 +98,46 @@ class TransactionTemplateService:
             status_code=422,
             detail="points_mode must be either 'automatic' or 'manual'.",
         )
+
+    @staticmethod
+    def _normalize_claim_limit_mode(value) -> str:
+        if value is None:
+            return "per_user"
+
+        if hasattr(value, "value"):
+            value = value.value
+
+        mode = str(value).strip().lower()
+        if mode in {"per_user", "overall"}:
+            return mode
+
+        raise HTTPException(
+            status_code=422,
+            detail="claim_limit_mode must be either 'per_user' or 'overall'.",
+        )
+
+    @staticmethod
+    def _normalize_claim_limit(value) -> int:
+        if value is None:
+            return 0
+
+        try:
+            normalized = int(value)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Invalid claim_limit '{value}'. "
+                    "Use 0 for unlimited or a positive integer."
+                ),
+            )
+
+        if normalized < 0:
+            raise HTTPException(
+                status_code=422, detail="claim_limit cannot be negative."
+            )
+
+        return normalized
 
     @staticmethod
     def _normalize_qr_enabled(value) -> bool:
@@ -92,6 +191,12 @@ class TransactionTemplateService:
         template_data["qr_enabled"] = self._normalize_qr_enabled(
             template_data.get("qr_enabled")
         )
+        template_data["claim_limit"] = self._normalize_claim_limit(
+            template_data.get("claim_limit")
+        )
+        template_data["claim_limit_mode"] = self._normalize_claim_limit_mode(
+            template_data.get("claim_limit_mode")
+        )
 
         db_template = TransactionTemplate(**template_data)
 
@@ -142,6 +247,12 @@ class TransactionTemplateService:
         db_template.points = points_value
         db_template.qr_enabled = self._normalize_qr_enabled(
             getattr(db_template, "qr_enabled", False)
+        )
+        db_template.claim_limit = self._normalize_claim_limit(
+            getattr(db_template, "claim_limit", 0)
+        )
+        db_template.claim_limit_mode = self._normalize_claim_limit_mode(
+            getattr(db_template, "claim_limit_mode", "per_user")
         )
 
         try:
@@ -326,6 +437,58 @@ class TransactionTemplateService:
                 TransactionTemplateQrClaim.user_sub == user_sub,
             )
             .count()
+        )
+
+    def count_qr_claims_overall(self, template_id: int) -> int:
+        return (
+            self.db.query(TransactionTemplateQrClaim.id)
+            .filter(TransactionTemplateQrClaim.template_id == template_id)
+            .count()
+        )
+
+    def ensure_claim_limit_available(
+        self, template: TransactionTemplate, user_id: str
+    ) -> None:
+        claim_limit = self._normalize_claim_limit(getattr(template, "claim_limit", 0))
+        if claim_limit <= 0:
+            return
+
+        claim_limit_mode = self._normalize_claim_limit_mode(
+            getattr(template, "claim_limit_mode", "per_user")
+        )
+
+        if claim_limit_mode == "overall":
+            claims_count = self.count_qr_claims_overall(template.id)
+            if claims_count >= claim_limit:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Claim limit reached for template '{template.name}'. "
+                        f"This template allows at most {claim_limit} claims in total."
+                    ),
+                )
+            return
+
+        claims_count = self.count_qr_claims_for_user(template.id, user_id)
+        if claims_count >= claim_limit:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Claim limit reached for template '{template.name}'. "
+                    f"You can claim it at most {claim_limit} times."
+                ),
+            )
+
+    def record_template_claim(
+        self,
+        template_id: int,
+        user_id: str,
+        point_transaction_id: Optional[int],
+    ) -> None:
+        self.register_qr_claim(
+            template_id=template_id,
+            user_sub=user_id,
+            transaction_id=point_transaction_id,
         )
 
     def register_qr_claim(

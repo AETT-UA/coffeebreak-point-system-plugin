@@ -20,3 +20,9 @@ class TransactionTemplate(Base):
     points = Column(Double, nullable=False)
     description = Column(Text, nullable=True)
     claim_limit = Column(Integer, nullable=True, default=0)
+    claim_limit_mode = Column(
+        String,
+        nullable=False,
+        default="per_user",
+        server_default="per_user",
+    )
