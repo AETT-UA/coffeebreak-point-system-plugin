@@ -295,6 +295,7 @@ function TemplateForm({ initial, activities, onSubmit, onCancel }) {
     activity_id: "",
     description: "",
     claim_limit: 0,
+    claim_limit_mode: "per_user",
   });
 
   useEffect(() => {
@@ -307,6 +308,7 @@ function TemplateForm({ initial, activities, onSubmit, onCancel }) {
         activity_id: initial.activity_id ? String(initial.activity_id) : "",
         description: initial.description ?? "",
         claim_limit: initial.claim_limit ?? 0,
+        claim_limit_mode: initial.claim_limit_mode ?? "per_user",
       });
       return;
     }
@@ -319,6 +321,7 @@ function TemplateForm({ initial, activities, onSubmit, onCancel }) {
       activity_id: "",
       description: "",
       claim_limit: 0,
+      claim_limit_mode: "per_user",
     });
   }, [initial]);
 
@@ -335,6 +338,7 @@ function TemplateForm({ initial, activities, onSubmit, onCancel }) {
       points: form.points_mode === "manual" ? 0 : Number(form.points),
       activity_id: form.activity_id ? Number(form.activity_id) : null,
       claim_limit: form.claim_limit ? Number(form.claim_limit) : 0,
+      claim_limit_mode: form.claim_limit_mode || "per_user",
     });
   };
 
@@ -423,17 +427,33 @@ function TemplateForm({ initial, activities, onSubmit, onCancel }) {
         />
       </div>
 
-      <div className="form-control">
-        <label className="label">
-          <span className="label-text">Claim Limit (0 = unlimited)</span>
-        </label>
-        <input
-          className="input input-bordered w-full"
-          type="number"
-          min="0"
-          value={form.claim_limit}
-          onChange={updateField("claim_limit")}
-        />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="form-control">
+          <label className="label">
+            <span className="label-text">Claim Limit (0 = unlimited)</span>
+          </label>
+          <input
+            className="input input-bordered w-full"
+            type="number"
+            min="0"
+            value={form.claim_limit}
+            onChange={updateField("claim_limit")}
+          />
+        </div>
+
+        <div className="form-control">
+          <label className="label">
+            <span className="label-text">Claim Limit Scope</span>
+          </label>
+          <select
+            className="select select-bordered w-full"
+            value={form.claim_limit_mode}
+            onChange={updateField("claim_limit_mode")}
+          >
+            <option value="per_user">Per user</option>
+            <option value="overall">Overall</option>
+          </select>
+        </div>
       </div>
 
       <div className="flex justify-end gap-2 pt-2">
@@ -1242,6 +1262,7 @@ function TemplatesSection({
                 <th>Points</th>
                 <th>Activity</th>
                 <th>Claim Limit</th>
+                <th>Limit Scope</th>
                 <th>Permissions</th>
                 <th>Actions</th>
               </tr>
@@ -1266,6 +1287,7 @@ function TemplatesSection({
                   </td>
                   <td>{template.activity_id ?? "-"}</td>
                   <td>{template.claim_limit === 0 ? "Unlimited" : template.claim_limit}</td>
+                  <td>{template.claim_limit_mode === "overall" ? "Overall" : "Per user"}</td>
                   <td>
                     <button
                       className="btn btn-outline btn-xs"

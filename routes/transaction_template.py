@@ -192,6 +192,8 @@ async def execute_template(
     if not service.can_execute_template(template_id, user_info, BYPASS_ROLE):
         raise HTTPException(status_code=403, detail="Access denied")
 
+    service.ensure_claim_limit_available(template, payload.user_id)
+
     transaction_type = (
         TransactionType.ACTIVITY
         if template.activity_id is not None
@@ -222,6 +224,8 @@ async def execute_template(
         )
         if transaction is None:
             raise HTTPException(status_code=502, detail="Failed to execute template")
+
+        service.record_template_claim(template.id, payload.user_id, transaction.id)
         return transaction
     except PointSystemUnavailable as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -271,23 +275,7 @@ async def claim_template_via_qr(
             detail=f"Template '{template.name}' has invalid points configuration.",
         )
 
-    try:
-        claim_limit = int(template.claim_limit or 0)
-    except (TypeError, ValueError):
-        raise HTTPException(
-            status_code=422,
-            detail=f"Template '{template.name}' has invalid claim_limit value.",
-        )
-    if claim_limit > 0:
-        claims_count = service.count_qr_claims_for_user(template.id, user_sub)
-        if claims_count >= claim_limit:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Claim limit reached for template '{template.name}'. "
-                    f"You can claim it at most {claim_limit} times."
-                ),
-            )
+    service.ensure_claim_limit_available(template, user_sub)
 
     transaction_type = (
         TransactionType.ACTIVITY

@@ -41,8 +41,11 @@ def _raise_upstream(e: UpstreamPointSystemError):
 async def _enforce_activity_claim_limit(
     user_id: str,
     activity_id: int,
+    template_id: int,
     template_name: str,
     claim_limit: Optional[int],
+    claim_limit_mode: Optional[str],
+    template_service: TransactionTemplateService,
 ):
     if claim_limit is None:
         return
@@ -59,6 +62,28 @@ async def _enforce_activity_claim_limit(
         )
 
     if normalized_limit <= 0:
+        return
+
+    normalized_mode = str(claim_limit_mode or "per_user").strip().lower()
+    if normalized_mode not in {"per_user", "overall"}:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Template '{template_name}' has invalid claim_limit_mode '{claim_limit_mode}'. "
+                "Use 'per_user' or 'overall'."
+            ),
+        )
+
+    if normalized_mode == "overall":
+        claims_count = template_service.count_qr_claims_overall(template_id)
+        if claims_count >= normalized_limit:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Claim limit reached for template '{template_name}'. "
+                    f"It allows at most {normalized_limit} claims in total."
+                ),
+            )
         return
 
     history = await PointSystemService.points.get_history(user_id)
@@ -358,8 +383,11 @@ async def add_activity_points(
         await _enforce_activity_claim_limit(
             user_id=user_id,
             activity_id=activity_id,
+            template_id=template.id,
             template_name=template.name,
             claim_limit=template.claim_limit,
+            claim_limit_mode=getattr(template, "claim_limit_mode", "per_user"),
+            template_service=template_service,
         )
 
         transaction = TransactionRequest(
@@ -375,6 +403,12 @@ async def add_activity_points(
         )
 
         if result:
+            template_service.register_qr_claim(
+                template_id=template.id,
+                user_sub=user_id,
+                transaction_id=result.id,
+            )
+
             return {
                 "message": "Activity points added successfully",
                 "activity_id": activity_id,
