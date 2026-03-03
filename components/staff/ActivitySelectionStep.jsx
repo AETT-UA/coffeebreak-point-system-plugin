@@ -19,7 +19,7 @@ export default function ActivitySelectionStep({
         <label className="form-control w-full">
           <span className="label-text mb-1">Select activity</span>
           <select
-            className="select select-bordered w-full"
+            className="select select-bordered w-full text-base"
             value={selectedActivityId}
             onChange={(event) => onChangeActivity(event.target.value)}
             disabled={isLoadingTemplates || activitiesLoading}

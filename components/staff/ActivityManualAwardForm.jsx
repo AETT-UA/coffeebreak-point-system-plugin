@@ -28,7 +28,7 @@ export default function ActivityManualAwardForm({
           type="number"
           min="1"
           step="1"
-          className="input input-bordered w-full"
+          className="input input-bordered w-full text-base"
           value={activityPointsInput}
           onChange={(event) => onPointsChange(event.target.value)}
           placeholder="e.g. 10"

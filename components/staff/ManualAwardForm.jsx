@@ -23,7 +23,7 @@ export default function ManualAwardForm({
           type="number"
           min="1"
           step="1"
-          className="input input-bordered w-full"
+          className="input input-bordered w-full text-base"
           value={pointsInput}
           onChange={(event) => onPointsChange(event.target.value)}
           placeholder="e.g. 10"
@@ -34,7 +34,7 @@ export default function ManualAwardForm({
       <label className="form-control w-full">
         <span className="label-text mb-1">Description (required)</span>
         <textarea
-          className="textarea textarea-bordered h-24 w-full"
+          className="textarea textarea-bordered h-24 w-full text-base"
           value={descriptionInput}
           onChange={(event) => onDescriptionChange(event.target.value)}
           placeholder="Why these points were awarded"
