@@ -427,7 +427,14 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
         stopScanner();
         await onVerifiedUser(String(userId));
       } catch (error) {
-        setScannerError(getErrorMessage(error, "Invalid or expired QR code."));
+        const status = error?.response?.status;
+        const msg =
+          status === 403
+            ? "QR code scanned successfully but you do not have permission to award points for this activity."
+            : status === 401
+            ? "You must be logged in to scan QR codes."
+            : getErrorMessage(error, "Invalid or expired QR code.");
+        setScannerError(msg);
       } finally {
         setIsVerifying(false);
         verifyInProgressRef.current = false;
@@ -629,7 +636,7 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
 
       try {
         const api = getApi();
-        const response = await api.get("/coffeebreak-point-system-plugin/transaction-template");
+        const response = await api.get("/coffeebreak-point-system-plugin/transaction-template/accessible");
         const templates = Array.isArray(response.data) ? response.data : [];
 
         const grouped = {};
@@ -705,7 +712,12 @@ export default function StaffPage({ title = "Staff QR Scanner" }) {
         setSuccessMessage(`Successfully awarded ${parsedPoints} points.`);
         setStep(STEP_SUCCESS);
       } catch (error) {
-        setFlowError(getErrorMessage(error, "Failed to award manual points."));
+        const status = error?.response?.status;
+        setFlowError(
+          status === 403
+            ? "You do not have permission to award manual points."
+            : getErrorMessage(error, "Failed to award manual points.")
+        );
       } finally {
         setIsSubmitting(false);
       }

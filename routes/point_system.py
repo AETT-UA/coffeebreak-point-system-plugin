@@ -260,7 +260,7 @@ async def add_points(
     user_id: str = Path(..., description="User identifier"),
     transaction: TransactionRequest = Body(...),
     transaction_type: TransactionType = TransactionType.MANUAL,
-    _: dict = Depends(check_role([BYPASS_ROLE])),
+    _: dict = Depends(check_role([ROLE, BYPASS_ROLE])),
 ):
     """
     Add points to user.

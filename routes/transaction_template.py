@@ -112,6 +112,20 @@ async def get_all_templates(
     return service.list_templates()
 
 
+@router.get("/accessible", response_model=List[Response])
+async def get_accessible_templates(
+    db: Session = Depends(get_db),
+    user_info: dict = Depends(get_current_user()),
+):
+    """Return templates the caller can execute (role or ACL match)."""
+    service = TransactionTemplateService(db)
+    return [
+        t
+        for t in service.list_templates()
+        if service.can_execute_template(t.id, user_info, BYPASS_ROLE)
+    ]
+
+
 @router.post("", response_model=Response)
 async def create_template(
     template: Base,
