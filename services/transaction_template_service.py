@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..models.transaction_template import TransactionTemplate
 from ..models.transaction_template_qr_claim import TransactionTemplateQrClaim
+from ..models.transaction_template_qr_claim_v2 import TransactionTemplateQrClaimV2
 from ..models.transaction_template_permission import (
     TransactionTemplateUserPermission,
     TransactionTemplateRolePermission,
@@ -431,18 +432,18 @@ class TransactionTemplateService:
 
     def count_qr_claims_for_user(self, template_id: int, user_sub: str) -> int:
         return (
-            self.db.query(TransactionTemplateQrClaim.id)
+            self.db.query(TransactionTemplateQrClaimV2.id)
             .filter(
-                TransactionTemplateQrClaim.template_id == template_id,
-                TransactionTemplateQrClaim.user_sub == user_sub,
+                TransactionTemplateQrClaimV2.template_id == template_id,
+                TransactionTemplateQrClaimV2.user_sub == user_sub,
             )
             .count()
         )
 
     def count_qr_claims_overall(self, template_id: int) -> int:
         return (
-            self.db.query(TransactionTemplateQrClaim.id)
-            .filter(TransactionTemplateQrClaim.template_id == template_id)
+            self.db.query(TransactionTemplateQrClaimV2.id)
+            .filter(TransactionTemplateQrClaimV2.template_id == template_id)
             .count()
         )
 
@@ -493,8 +494,8 @@ class TransactionTemplateService:
 
     def register_qr_claim(
         self, template_id: int, user_sub: str, transaction_id: Optional[int] = None
-    ) -> TransactionTemplateQrClaim:
-        claim = TransactionTemplateQrClaim(
+    ) -> TransactionTemplateQrClaimV2:
+        claim = TransactionTemplateQrClaimV2(
             template_id=template_id,
             user_sub=user_sub,
             transaction_id=transaction_id,

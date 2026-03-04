@@ -86,21 +86,14 @@ async def _enforce_activity_claim_limit(
             )
         return
 
-    history = await PointSystemService.points.get_history(user_id)
-    claims_count = sum(
-        1
-        for tx in history
-        if tx.transaction_type == TransactionType.ACTIVITY
-        and tx.activity_id == activity_id
-        and tx.points > 0
-    )
+    claims_count = template_service.count_qr_claims_for_user(template_id, user_id)
 
     if claims_count >= normalized_limit:
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Claim limit reached for activity {activity_id}. "
-                f"Template '{template_name}' allows at most {normalized_limit} successful claims per participant."
+                f"Claim limit reached for template '{template_name}'. "
+                f"It allows at most {normalized_limit} successful claims per participant."
             ),
         )
 
