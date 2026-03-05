@@ -99,7 +99,10 @@ export default function MyPointsPage({
             
             // Handle both array response and paginated response
             if (Array.isArray(transactionsResponse.data)) {
-              setTransactions(transactionsResponse.data);
+              const sortedTransactions = [...transactionsResponse.data].sort(
+                (a, b) => new Date(b.created_at) - new Date(a.created_at)
+              );
+              setTransactions(sortedTransactions);
               setTotalTransactions(transactionsResponse.data.length);
             } else if (transactionsResponse.data?.items) {
               // Paginated response with items and total
@@ -147,15 +150,14 @@ export default function MyPointsPage({
 
   useEffect(() => {
     if (currentUserId) {
-      setCurrentPage(1); // Reset to first page when user changes
       void loadUserData();
     }
-  }, [currentUserId, loadUserData]);
+  }, [currentUserId, currentPage, loadUserData]);
 
-  // Reset to first page when transaction limit changes
+  // Reset to first page when user or transaction limit changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [transaction_limit]);
+  }, [currentUserId, transaction_limit]);
 
   if (!currentUserId) {
     return (
